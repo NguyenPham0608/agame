@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Shopkeeper's Quest</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Title Screen -->
+  <div id="title-screen" class="screen active">
+    <div class="title-content">
+      <h1>Shopkeeper's Quest</h1>
+      <p class="subtitle">You are the merchant. Stock your shelves. Brave the dungeons.</p>
+      <button id="btn-start" class="btn-primary">Begin Your Day</button>
+    </div>
+  </div>
+
+  <!-- Shop Screen -->
+  <div id="shop-screen" class="screen">
+    <div class="hud">
+      <div class="hud-left">
+        <span class="gold-display">Gold: <strong id="gold-amount">50</strong></span>
+        <span class="day-display">Day: <strong id="day-count">1</strong></span>
+        <span class="rep-display">Rep: <strong id="rep-count">0</strong></span>
+      </div>
+      <div class="hud-right">
+        <button id="btn-inventory" class="btn-small">Inventory</button>
+        <button id="btn-recipes" class="btn-small">Recipes</button>
+      </div>
+    </div>
+    <div class="shop-layout">
+      <div class="shop-counter">
+        <h2>Your Shop</h2>
+        <div id="customer-area">
+          <p class="empty-msg">No customers yet. Go dungeon scavenging first!</p>
+        </div>
+      </div>
+      <div class="shop-actions">
+        <h3>Actions</h3>
+        <button id="btn-dungeon" class="btn-action">Enter Dungeon</button>
+        <button id="btn-trade" class="btn-action">Visit Traders</button>
+        <button id="btn-craft" class="btn-action">Craft Items</button>
+        <button id="btn-end-day" class="btn-action btn-secondary">End Day</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Dungeon Screen -->
+  <div id="dungeon-screen" class="screen">
+    <div class="hud">
+      <div class="hud-left">
+        <span>HP: <strong id="player-hp">10</strong>/<strong id="player-max-hp">10</strong></span>
+        <span class="gold-display">Gold: <strong id="dg-gold">50</strong></span>
+      </div>
+      <div class="hud-right">
+        <span id="dungeon-name">Dungeon</span>
+        <button id="btn-flee" class="btn-small btn-danger">Flee</button>
+      </div>
+    </div>
+    <canvas id="dungeon-canvas" width="640" height="480"></canvas>
+    <div id="dungeon-result" class="dungeon-overlay">
+      <div class="result-box">
+        <h2 id="result-title"></h2>
+        <div id="result-body"></div>
+        <button id="btn-result-continue" class="btn-primary">Continue</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Trade Screen -->
+  <div id="trade-screen" class="screen">
+    <div class="hud">
+      <div class="hud-left"><h2 id="trader-name">Trader</h2></div>
+      <div class="hud-right"><button id="btn-leave-trade" class="btn-small">Leave</button></div>
+    </div>
+    <div class="trade-layout">
+      <div class="trade-panel">
+        <h3>Trader's Offers</h3>
+        <div id="trader-offers"></div>
+      </div>
+      <div class="trade-panel">
+        <h3>Your Inventory</h3>
+        <div id="trade-inventory"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Craft Screen -->
+  <div id="craft-screen" class="screen">
+    <div class="hud">
+      <div class="hud-left"><h2>Crafting Table</h2></div>
+      <div class="hud-right"><button id="btn-leave-craft" class="btn-small">Back</button></div>
+    </div>
+    <div class="craft-layout">
+      <div class="craft-recipes" id="craft-recipes"></div>
+      <div class="craft-inventory">
+        <h3>Your Materials</h3>
+        <div id="craft-inventory-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Inventory Modal -->
+  <div id="inventory-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Inventory</h2>
+        <button class="modal-close" id="close-inventory">&times;</button>
+      </div>
+      <div id="inventory-list" class="modal-body"></div>
+    </div>
+  </div>
+
+  <!-- Recipes Modal -->
+  <div id="recipes-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Known Recipes</h2>
+        <button class="modal-close" id="close-recipes">&times;</button>
+      </div>
+      <div id="recipes-list" class="modal-body"></div>
+    </div>
+  </div>
+
+  <!-- Dungeon Select Modal -->
+  <div id="dungeon-select-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Choose a Dungeon</h2>
+        <button class="modal-close" id="close-dungeon-select">&times;</button>
+      </div>
+      <div id="dungeon-select-list" class="modal-body"></div>
+    </div>
+  </div>
+
+  <!-- Trader Select Modal -->
+  <div id="trader-select-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Choose a Trader</h2>
+        <button class="modal-close" id="close-trader-select">&times;</button>
+      </div>
+      <div id="trader-select-list" class="modal-body"></div>
+    </div>
+  </div>
+
+  <script src="levels.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>

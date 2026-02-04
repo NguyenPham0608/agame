@@ -1,0 +1,7 @@
+Shopkeeper’s Quest: An RPG where you play as the NPC merchant who has to restock rare items by scavenging dangerous dungeons.
+
+Make this project in HTML, JS, and CSS. 
+It should be nice and easy for the designer to make the levels. 
+You need to collect different pieces of materials and you trade with other traders to make the things that the customers want. 
+There are things in the level that make it hard to collect the materials.
+
