@@ -69,6 +69,12 @@
   let lootBagItems = [];
   let lootBagPulse = 0;
 
+  // ──────── COMBAT CAMERA ZOOM ────────
+  let zoomLevel = 1.0;
+  let zoomTarget = 1.0;
+  let combatFocusX = 0, combatFocusY = 0;
+  let combatFocusActive = false;
+
   // Seeded random for deterministic decoration
   function seededRand(seed) {
     let s = seed;
@@ -549,6 +555,9 @@
     direction = Math.PI;
     swingFrames = SWING_DURATION;
     swordHitEnemies = new Set();
+    zoomLevel = 1.0;
+    zoomTarget = 1.0;
+    combatFocusActive = false;
 
     camX = state.playerX - canvas.width / 2;
     camY = state.playerY - canvas.height / 2;
@@ -688,13 +697,61 @@
 
   // ──────── CAMERA ────────
   function clampCamera() {
-    camX = Math.max(0, Math.min(camX, mapCols * TILE - canvas.width));
-    camY = Math.max(0, Math.min(camY, mapRows * TILE - canvas.height));
+    const viewW = canvas.width / zoomLevel;
+    const viewH = canvas.height / zoomLevel;
+    camX = Math.max(0, Math.min(camX, mapCols * TILE - viewW));
+    camY = Math.max(0, Math.min(camY, mapRows * TILE - viewH));
+  }
+
+  function updateCombatZoom() {
+    // Find nearest alive enemy chasing the player
+    let nearestEnemy = null;
+    let nearestDist = Infinity;
+    for (const e of enemies) {
+      if (e.dead) continue;
+      const dx = state.playerX - e.x, dy = state.playerY - e.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < 320 && dist < nearestDist) {
+        nearestDist = dist;
+        nearestEnemy = e;
+      }
+    }
+
+    if (nearestEnemy) {
+      combatFocusActive = true;
+      // Zoom based on distance: closer = more zoom, max 1.35, start zooming at 160
+      const t = 1 - Math.min(1, nearestDist / 320);
+      const eased = t * t * (3 - 2 * t); // smoothstep
+      zoomTarget = 1.0 + eased * 0.175;
+      // Focus point: midpoint between player and enemy, biased toward player (70/30)
+      combatFocusX = state.playerX * 0.7 + nearestEnemy.x * 0.3;
+      combatFocusY = state.playerY * 0.7 + nearestEnemy.y * 0.3;
+    } else {
+      combatFocusActive = false;
+      zoomTarget = 1.0;
+    }
+
+    // Ease zoom with different speeds for zoom-in vs zoom-out
+    const zoomSpeed = zoomTarget > zoomLevel ? 0.04 : 0.025;
+    zoomLevel += (zoomTarget - zoomLevel) * zoomSpeed;
+    if (Math.abs(zoomLevel - zoomTarget) < 0.001) zoomLevel = zoomTarget;
   }
 
   function updateCamera() {
-    camX += (state.playerX - canvas.width / 2 - camX) * CAMERA_LERP;
-    camY += (state.playerY - canvas.height / 2 - camY) * CAMERA_LERP;
+    const viewW = canvas.width / zoomLevel;
+    const viewH = canvas.height / zoomLevel;
+
+    let targetX, targetY;
+    if (combatFocusActive) {
+      targetX = combatFocusX - viewW / 2;
+      targetY = combatFocusY - viewH / 2;
+    } else {
+      targetX = state.playerX - viewW / 2;
+      targetY = state.playerY - viewH / 2;
+    }
+
+    camX += (targetX - camX) * CAMERA_LERP;
+    camY += (targetY - camY) * CAMERA_LERP;
     clampCamera();
   }
 
@@ -1536,8 +1593,8 @@
       const dx = state.playerX - e.x, dy = state.playerY - e.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
       // Chase player when in range
-      if (dist < 160 && dist > 8) {
-        const spd = 0.9 + (state.currentDungeon.difficulty - 1) * 0.15;
+      if (dist < 320 && dist > 8) {
+        const spd = 0.45 + (state.currentDungeon.difficulty - 1) * 0.075;
         const mx = e.x + (dx / dist) * spd, my = e.y + (dy / dist) * spd;
         if (!isSolid(Math.floor(mx / TILE), Math.floor(my / TILE))) { e.x = mx; e.y = my; }
       }
@@ -1942,7 +1999,8 @@
     checkTileInteractions();
     if (!state.inDungeon) return;
 
-    // Camera
+    // Camera & combat zoom
+    updateCombatZoom();
     updateCamera();
 
     // Update systems
@@ -1956,14 +2014,20 @@
     ctx.fillStyle = dungeon.ambientColor;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Apply screen shake offset to world rendering
+    // Apply zoom + screen shake to world rendering
     ctx.save();
+    // Zoom from center of canvas
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    ctx.scale(zoomLevel, zoomLevel);
+    ctx.translate(-canvas.width / 2, -canvas.height / 2);
     ctx.translate(shakeOffsetX, shakeOffsetY);
 
+    const viewW = canvas.width / zoomLevel;
+    const viewH = canvas.height / zoomLevel;
     const startCol = Math.max(0, Math.floor(camX / TILE) - 1);
-    const endCol = Math.min(mapCols - 1, Math.floor((camX + canvas.width) / TILE) + 1);
+    const endCol = Math.min(mapCols - 1, Math.floor((camX + viewW) / TILE) + 2);
     const startRow = Math.max(0, Math.floor(camY / TILE) - 1);
-    const endRow = Math.min(mapRows - 1, Math.floor((camY + canvas.height) / TILE) + 1);
+    const endRow = Math.min(mapRows - 1, Math.floor((camY + viewH) / TILE) + 2);
 
     // Pass 1: Floors
     for (let r = startRow; r <= endRow; r++) {
