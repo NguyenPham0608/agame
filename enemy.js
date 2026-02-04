@@ -1,15 +1,29 @@
 /* ============================================
-   Enemy Class — Shopkeeper's Quest
+   Enemy Class — Context-Based Steering AI
    ============================================ */
 
 // The game engine sets this before enemies are used.
-// Provides access to: ctx, canvas, camX, camY, state, TILE,
-// isSolid, particles, spawnFloatingText, triggerShake,
-// damageFlash (getter/setter), fleeDungeon, $
 let _g = null;
 
 function setEnemyGameRef(gameRef) {
   _g = gameRef;
+}
+
+// ── Steering Constants ──
+const NUM_DIRS = 16;
+const DIR_VECTORS = [];
+for (let i = 0; i < NUM_DIRS; i++) {
+  const a = (i / NUM_DIRS) * Math.PI * 2;
+  DIR_VECTORS.push({ x: Math.cos(a), y: Math.sin(a) });
+}
+
+// Smooth noise via layered sine waves (replaces simplex for simplicity).
+// Gives smooth, organic direction changes unique per entity.
+function smoothNoise(t, seed) {
+  return Math.sin(t * 0.7 + seed * 1.0) * 0.4
+       + Math.sin(t * 1.3 + seed * 2.3) * 0.3
+       + Math.sin(t * 0.3 + seed * 0.7) * 0.2
+       + Math.sin(t * 2.1 + seed * 3.1) * 0.1;
 }
 
 class Enemy {
@@ -26,6 +40,12 @@ class Enemy {
     this.dead = false;
     this.deathTimer = 0;
     this.type = type;
+
+    // Steering AI state
+    this.spawnX = x;
+    this.spawnY = y;
+    this.noiseOffset = Math.random() * 1000;
+    this.strafeDir = Math.random() < 0.5 ? 1 : -1; // CW or CCW circling
   }
 
   get name() { return this.type ? this.type.name : "Monster"; }
@@ -34,7 +54,7 @@ class Enemy {
   get size() { return this.type ? this.type.size : 10; }
   get shape() { return this.type ? this.type.shape : "circle"; }
 
-  // Returns true if enemy should be removed
+  // Returns true if enemy should be removed from the list
   update() {
     if (this.dead) {
       this.deathTimer--;
@@ -43,7 +63,7 @@ class Enemy {
     if (this.attackCooldown > 0) this.attackCooldown--;
     if (this.hitFlash > 0) this.hitFlash--;
 
-    // Apply knockback
+    // ── Knockback (unchanged) ──
     const kbSpeed = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
     if (kbSpeed > 0.1) {
       const nx = this.x + this.vx, ny = this.y + this.vy;
@@ -54,32 +74,142 @@ class Enemy {
     this.vx *= 0.78;
     this.vy *= 0.78;
 
+    // Don't steer while in knockback or hit-stun
     if (this.hitFlash > 0 || kbSpeed > 1.5) return false;
 
+    // ── Context-Based Steering ──
     const state = _g.state;
-    const dx = state.playerX - this.x, dy = state.playerY - this.y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
+    const dx = state.playerX - this.x;
+    const dy = state.playerY - this.y;
+    const distToPlayer = Math.sqrt(dx * dx + dy * dy);
 
-    // Chase player when in range
-    if (dist < 320 && dist > 8) {
-      const spd = 0.45 + (state.currentDungeon.difficulty - 1) * 0.075;
-      const mx = this.x + (dx / dist) * spd, my = this.y + (dy / dist) * spd;
-      if (!_g.isSolid(Math.floor(mx / _g.TILE), Math.floor(my / _g.TILE))) {
-        this.x = mx; this.y = my;
+    // Normalised direction to player
+    const toPx = distToPlayer > 0 ? dx / distToPlayer : 0;
+    const toPy = distToPlayer > 0 ? dy / distToPlayer : 0;
+
+    // Perpendicular (for strafing / circling)
+    const perpX = -toPy * this.strafeDir;
+    const perpY = toPx * this.strafeDir;
+
+    const interest = new Float32Array(NUM_DIRS);
+    const danger  = new Float32Array(NUM_DIRS);
+    const t = performance.now() / 1000;
+    const inRange = distToPlayer < 320;
+
+    // Engagement pulse — creates in-and-out combat rhythm
+    const engagePulse = 0.5 + 0.5 * Math.sin(t * 0.8 + this.noiseOffset * 0.5);
+
+    for (let i = 0; i < NUM_DIRS; i++) {
+      const dv = DIR_VECTORS[i];
+
+      if (inRange) {
+        // ── CHASE ──
+        // Weight fades as enemy gets closer so strafing takes over
+        const chaseDot = dv.x * toPx + dv.y * toPy;
+        const chaseW = Math.max(0, (distToPlayer - 25) / 295);
+        interest[i] += Math.max(0, chaseDot) * chaseW * (0.6 + engagePulse * 0.4);
+
+        // ── STRAFE / CIRCLE ──
+        const strafeDot = dv.x * perpX + dv.y * perpY;
+        const strafeW = 1.0 - Math.min(1, distToPlayer / 150);
+        // Forward bias so strafing doesn't devolve into retreating
+        const fwdBias = Math.max(0, chaseDot * 0.3 + 0.7);
+        interest[i] += Math.max(0, strafeDot) * strafeW * 0.8 * fwdBias;
+
+        // ── RETREAT when very close ──
+        if (distToPlayer < 30) {
+          const retreatDot = -(dv.x * toPx + dv.y * toPy);
+          const retreatW = 1 - (distToPlayer / 30);
+          interest[i] += Math.max(0, retreatDot) * retreatW * (1 - engagePulse) * 0.6;
+        }
+      } else {
+        // ── WANDER (noise-driven) ──
+        // Two noise channels give a smooth 2D wander vector
+        const wx = smoothNoise(t * 0.5, this.noiseOffset);
+        const wy = smoothNoise(t * 0.5, this.noiseOffset + 500);
+        const wLen = Math.sqrt(wx * wx + wy * wy) || 1;
+        const wanderDot = dv.x * (wx / wLen) + dv.y * (wy / wLen);
+        interest[i] += Math.max(0, wanderDot) * 0.4;
+
+        // ── HOME BIAS ──
+        // Subtly steers back toward spawn point when far away
+        const hx = this.spawnX - this.x;
+        const hy = this.spawnY - this.y;
+        const homeDist = Math.sqrt(hx * hx + hy * hy);
+        if (homeDist > 48) {
+          const homeNx = hx / homeDist;
+          const homeNy = hy / homeDist;
+          const homeDot = dv.x * homeNx + dv.y * homeNy;
+          const homeW = Math.min(1, (homeDist - 48) / 96);
+          interest[i] += Math.max(0, homeDot) * homeW * 0.6;
+        }
+      }
+
+      // ── SEPARATION (angular shaping) ──
+      // Enemies prefer sliding past each other at an angle, not pushing directly away
+      const enemies = _g.enemies;
+      for (const other of enemies) {
+        if (other === this || other.dead) continue;
+        const sex = this.x - other.x;
+        const sey = this.y - other.y;
+        const seDist = Math.sqrt(sex * sex + sey * sey);
+        if (seDist < 36 && seDist > 0) {
+          const awayNx = sex / seDist;
+          const awayNy = sey / seDist;
+          const awayDot = dv.x * awayNx + dv.y * awayNy;
+          // Perpendicular to away — angular shaping
+          const perpADot = Math.abs(dv.x * (-awayNy) + dv.y * awayNx);
+          const sepVal = Math.max(0, awayDot * 0.3 + perpADot * 0.7);
+          const sepW = 1 - (seDist / 36);
+          interest[i] += sepVal * sepW * 0.5;
+        }
+      }
+
+      // ── DANGER: wall detection ──
+      // Check two distances to smoothly avoid walls
+      for (let r = 1; r <= 2; r++) {
+        const cx = this.x + dv.x * 10 * r;
+        const cy = this.y + dv.y * 10 * r;
+        if (_g.isSolid(Math.floor(cx / _g.TILE), Math.floor(cy / _g.TILE))) {
+          danger[i] = Math.max(danger[i], r === 1 ? 1.0 : 0.5);
+        }
       }
     }
 
-    // Attack player on contact
-    if (dist < 18 && this.attackCooldown <= 0) {
+    // ── Pick best direction ──
+    let bestI = -1;
+    let bestScore = -1;
+    for (let i = 0; i < NUM_DIRS; i++) {
+      const score = interest[i] * (1 - danger[i]);
+      if (score > bestScore) {
+        bestScore = score;
+        bestI = i;
+      }
+    }
+
+    // ── Move ──
+    if (bestI >= 0 && bestScore > 0.01) {
+      const baseSpd = 0.45 + (state.currentDungeon.difficulty - 1) * 0.075;
+      const spdMod = inRange ? 1.0 : 0.5;
+      const mx = this.x + DIR_VECTORS[bestI].x * baseSpd * spdMod;
+      const my = this.y + DIR_VECTORS[bestI].y * baseSpd * spdMod;
+      if (!_g.isSolid(Math.floor(mx / _g.TILE), Math.floor(my / _g.TILE))) {
+        this.x = mx;
+        this.y = my;
+      }
+    }
+
+    // ── Attack on contact ──
+    if (distToPlayer < 18 && this.attackCooldown <= 0) {
       state.hp -= this.damage;
       this.attackCooldown = 60;
       _g.spawnFloatingText(state.playerX, state.playerY - 25, `-${this.damage} HP`, "#e94560", 16);
       _g.triggerShake(8);
       _g.damageFlash = 15;
       _g.$("#player-hp").textContent = Math.max(0, state.hp);
-      if (dist > 0) {
-        state.velX -= (dx / dist) * 2.5;
-        state.velY -= (dy / dist) * 2.5;
+      if (distToPlayer > 0) {
+        state.velX -= toPx * 2.5;
+        state.velY -= toPy * 2.5;
       }
       if (state.hp <= 0) { _g.fleeDungeon(true); return false; }
     }

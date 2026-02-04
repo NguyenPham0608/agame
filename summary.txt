@@ -1,5 +1,6 @@
 THIS IS A SUMMARY OF A VIDEO MADE BY GAME ENDAVOR FOR THE EXPECTED ENEMY BEHAVIOR.
 
+Real link: https://www.youtube.com/watch?v=6BrZryMz-ac&t=2s
 
 The video discusses how the developer improved enemy movement and behavior in their game to make combat more engaging and natural. Initially, the developer explored steering behaviors, which combine simple actions, but found a major flaw where opposing vectors could cancel each other out, leaving AI "dumbfounded" by obstacles.
 

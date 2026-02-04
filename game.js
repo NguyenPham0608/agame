@@ -1935,6 +1935,7 @@
     TILE,
     isSolid,
     get particles() { return particles; },
+    get enemies() { return enemies; },
     spawnFloatingText,
     triggerShake,
     get damageFlash() { return damageFlash; },
