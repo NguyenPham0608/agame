@@ -1439,19 +1439,13 @@
       for (let c = 0; c < mapCols; c++) {
         if (dungeonMap[r][c] === 4) {
           const etype = types.length > 0 ? types[Math.floor(Math.random() * types.length)] : null;
-          enemies.push({
-            x: c * TILE + TILE / 2,
-            y: r * TILE + TILE / 2,
-            hp: state.currentDungeon.enemyHP || 2,
-            maxHp: state.currentDungeon.enemyHP || 2,
-            vx: 0, vy: 0,
-            damage: state.currentDungeon.enemyDamage,
-            attackCooldown: 0,
-            hitFlash: 0,
-            dead: false,
-            deathTimer: 0,
-            type: etype,
-          });
+          enemies.push(new Enemy(
+            c * TILE + TILE / 2,
+            r * TILE + TILE / 2,
+            state.currentDungeon.enemyHP || 2,
+            state.currentDungeon.enemyDamage,
+            etype,
+          ));
           dungeonMap[r][c] = 0;
         }
       }
@@ -1516,7 +1510,6 @@
   function checkSwordHits() {
     if (swingFrames >= SWING_DURATION) return;
     if (Math.abs(swordSwingVel) < 0.03) return;
-    // Compute sword tip in world coords from screen position
     const tipSX = swordScreenX + Math.cos(swordAngle) * SWORD_BLADE_LENGTH;
     const tipSY = swordScreenY + Math.sin(swordAngle) * SWORD_BLADE_LENGTH;
     const tipWorldX = tipSX + camX;
@@ -1527,344 +1520,17 @@
       if (e.dead || swordHitEnemies.has(e)) continue;
       const dist = pointToSegDist(e.x, e.y, baseWorldX, baseWorldY, tipWorldX, tipWorldY);
       if (dist < 14) {
-        e.hp--;
         swordHitEnemies.add(e);
-        e.hitFlash = 8;
-        const dx = e.x - state.playerX, dy = e.y - state.playerY;
-        const d = Math.sqrt(dx * dx + dy * dy) || 1;
-        e.vx += (dx / d) * 5;
-        e.vy += (dy / d) * 5;
-        for (let j = 0; j < 5; j++) {
-          particles.push({
-            x: e.x + (Math.random() - 0.5) * 8,
-            y: e.y + (Math.random() - 0.5) * 8,
-            vx: (Math.random() - 0.5) * 2.5,
-            vy: (Math.random() - 0.5) * 2.5,
-            life: 15 + Math.random() * 10,
-            maxLife: 25,
-            size: 2 + Math.random() * 2,
-            type: "hit",
-          });
-        }
-        spawnFloatingText(e.x, e.y - 15, "HIT!", "#ff8", 12);
-        triggerShake(3);
-        if (e.hp <= 0) {
-          e.dead = true;
-          e.deathTimer = 20;
-          const ename = e.type ? e.type.name : "Monster";
-          spawnFloatingText(e.x, e.y - 25, `${ename} Defeated!`, "#f5c842", 16);
-          triggerShake(6);
-          for (let j = 0; j < 8; j++) {
-            particles.push({
-              x: e.x + (Math.random() - 0.5) * 12,
-              y: e.y + (Math.random() - 0.5) * 12,
-              vx: (Math.random() - 0.5) * 3,
-              vy: (Math.random() - 0.5) * 3,
-              life: 20 + Math.random() * 15,
-              maxLife: 35,
-              size: 2.5 + Math.random() * 3,
-              type: "death",
-            });
-          }
-        }
+        e.takeHit();
       }
     }
   }
 
   function updateEnemies() {
     for (let i = enemies.length - 1; i >= 0; i--) {
-      const e = enemies[i];
-      if (e.dead) {
-        e.deathTimer--;
-        if (e.deathTimer <= 0) enemies.splice(i, 1);
-        continue;
-      }
-      if (e.attackCooldown > 0) e.attackCooldown--;
-      if (e.hitFlash > 0) e.hitFlash--;
-      // Apply knockback
-      const kbSpeed = Math.sqrt(e.vx * e.vx + e.vy * e.vy);
-      if (kbSpeed > 0.1) {
-        const nx = e.x + e.vx, ny = e.y + e.vy;
-        if (!isSolid(Math.floor(nx / TILE), Math.floor(ny / TILE))) { e.x = nx; e.y = ny; }
-      }
-      e.vx *= 0.78;
-      e.vy *= 0.78;
-      if (e.hitFlash > 0 || kbSpeed > 1.5) continue;
-      const dx = state.playerX - e.x, dy = state.playerY - e.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      // Chase player when in range
-      if (dist < 320 && dist > 8) {
-        const spd = 0.45 + (state.currentDungeon.difficulty - 1) * 0.075;
-        const mx = e.x + (dx / dist) * spd, my = e.y + (dy / dist) * spd;
-        if (!isSolid(Math.floor(mx / TILE), Math.floor(my / TILE))) { e.x = mx; e.y = my; }
-      }
-      // Attack player on contact
-      if (dist < 18 && e.attackCooldown <= 0) {
-        state.hp -= e.damage;
-        e.attackCooldown = 60;
-        spawnFloatingText(state.playerX, state.playerY - 25, `-${e.damage} HP`, "#e94560", 16);
-        triggerShake(8);
-        damageFlash = 15;
-        $("#player-hp").textContent = Math.max(0, state.hp);
-        if (dist > 0) { state.velX -= (dx / dist) * 2.5; state.velY -= (dy / dist) * 2.5; }
-        if (state.hp <= 0) { fleeDungeon(true); return; }
-      }
+      if (enemies[i].update()) enemies.splice(i, 1);
+      if (!state.inDungeon) return;
     }
-  }
-
-  function drawEnemyEntity(e) {
-    const sx = e.x - camX, sy = e.y - camY;
-    if (sx < -30 || sx > canvas.width + 30 || sy < -30 || sy > canvas.height + 30) return;
-    if (e.dead) ctx.globalAlpha = e.deathTimer / 20;
-    const t = performance.now() / 500;
-    const bob = e.dead ? 0 : Math.sin(t + e.x * 0.01) * 1.5;
-    const et = e.type;
-    const bodyColor = e.hitFlash > 0 ? "#fff" : (et ? et.bodyColor : "#c44");
-    const eyeColor = et ? et.eyeColor : "#fff";
-    const sz = et ? et.size : 10;
-    const shape = et ? et.shape : "circle";
-
-    ctx.save();
-    ctx.translate(sx, sy + bob);
-
-    // Draw body based on shape
-    if (shape === "square") {
-      // Golem — blocky body
-      ctx.fillStyle = bodyColor;
-      ctx.fillRect(-sz, -sz, sz * 2, sz * 2);
-      ctx.strokeStyle = e.hitFlash > 0 ? "#ddd" : "rgba(0,0,0,0.3)";
-      ctx.lineWidth = 2;
-      ctx.strokeRect(-sz, -sz, sz * 2, sz * 2);
-      // Rocky texture lines
-      if (e.hitFlash <= 0) {
-        ctx.strokeStyle = "rgba(0,0,0,0.15)";
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(-sz + 3, -sz + 5); ctx.lineTo(sz - 3, -sz + 5);
-        ctx.moveTo(-sz + 2, sz - 4); ctx.lineTo(sz - 2, sz - 4);
-        ctx.stroke();
-      }
-    } else if (shape === "bat") {
-      // Bat — body with wings
-      ctx.fillStyle = bodyColor;
-      ctx.beginPath();
-      ctx.arc(0, 0, sz, 0, Math.PI * 2);
-      ctx.fill();
-      // Wings flap
-      const wingAngle = Math.sin(t * 3 + e.x) * 0.4;
-      ctx.fillStyle = bodyColor;
-      // Left wing
-      ctx.beginPath();
-      ctx.moveTo(-sz, -2);
-      ctx.quadraticCurveTo(-sz * 2.5, -sz * 1.5 + wingAngle * 8, -sz * 2, 2);
-      ctx.quadraticCurveTo(-sz * 1.5, 0, -sz, 2);
-      ctx.fill();
-      // Right wing
-      ctx.beginPath();
-      ctx.moveTo(sz, -2);
-      ctx.quadraticCurveTo(sz * 2.5, -sz * 1.5 + wingAngle * 8, sz * 2, 2);
-      ctx.quadraticCurveTo(sz * 1.5, 0, sz, 2);
-      ctx.fill();
-    } else if (shape === "spider") {
-      // Spider — body with legs
-      ctx.fillStyle = bodyColor;
-      ctx.beginPath();
-      ctx.ellipse(0, 0, sz, sz * 0.7, 0, 0, Math.PI * 2);
-      ctx.fill();
-      // Head
-      ctx.beginPath();
-      ctx.arc(0, -sz * 0.6, sz * 0.5, 0, Math.PI * 2);
-      ctx.fill();
-      // Legs
-      ctx.strokeStyle = bodyColor;
-      ctx.lineWidth = 1.5;
-      const legWiggle = Math.sin(t * 4 + e.x) * 3;
-      for (let side = -1; side <= 1; side += 2) {
-        for (let leg = 0; leg < 3; leg++) {
-          const angle = (leg - 1) * 0.5 + side * 0.3;
-          ctx.beginPath();
-          ctx.moveTo(side * sz * 0.6, -2 + leg * 3);
-          ctx.lineTo(side * (sz + 6), -5 + leg * 4 + legWiggle * (leg === 1 ? 1 : -0.5));
-          ctx.stroke();
-        }
-      }
-    } else if (shape === "wisp") {
-      // Wisp — glowing ethereal orb
-      const pulse = 0.7 + 0.3 * Math.sin(t * 2.5 + e.x * 0.05);
-      // Outer glow
-      ctx.globalAlpha = (e.dead ? e.deathTimer / 20 : 1) * 0.25 * pulse;
-      ctx.fillStyle = eyeColor;
-      ctx.beginPath();
-      ctx.arc(0, 0, sz * 2, 0, Math.PI * 2);
-      ctx.fill();
-      // Inner glow
-      ctx.globalAlpha = (e.dead ? e.deathTimer / 20 : 1) * 0.5 * pulse;
-      ctx.fillStyle = bodyColor;
-      ctx.beginPath();
-      ctx.arc(0, 0, sz, 0, Math.PI * 2);
-      ctx.fill();
-      // Core
-      ctx.globalAlpha = e.dead ? e.deathTimer / 20 : 1;
-      ctx.fillStyle = eyeColor;
-      ctx.beginPath();
-      ctx.arc(0, 0, sz * 0.4, 0, Math.PI * 2);
-      ctx.fill();
-    } else if (shape === "skull") {
-      // Skeleton — skull shape
-      ctx.fillStyle = bodyColor;
-      // Cranium
-      ctx.beginPath();
-      ctx.arc(0, -2, sz, 0, Math.PI * 2);
-      ctx.fill();
-      // Jaw
-      ctx.fillRect(-sz * 0.6, sz * 0.4, sz * 1.2, sz * 0.5);
-      // Teeth
-      if (e.hitFlash <= 0) {
-        ctx.fillStyle = "#fff";
-        for (let tx = -3; tx <= 3; tx += 2) {
-          ctx.fillRect(tx - 0.5, sz * 0.4, 1.5, 2.5);
-        }
-      }
-      // Dark eye sockets
-      ctx.fillStyle = e.hitFlash > 0 ? "#ddd" : "#222";
-      ctx.beginPath();
-      ctx.arc(-3, -3, 3, 0, Math.PI * 2);
-      ctx.arc(3, -3, 3, 0, Math.PI * 2);
-      ctx.fill();
-      // Glowing pupils
-      if (e.hitFlash <= 0) {
-        ctx.fillStyle = eyeColor;
-        ctx.beginPath();
-        ctx.arc(-3, -3, 1.5, 0, Math.PI * 2);
-        ctx.arc(3, -3, 1.5, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    } else if (shape === "ghost") {
-      // Ghost — wavy bottom
-      const waveT = t * 2 + e.x * 0.02;
-      ctx.fillStyle = bodyColor;
-      ctx.globalAlpha = (e.dead ? e.deathTimer / 20 : 1) * 0.7;
-      ctx.beginPath();
-      ctx.arc(0, -3, sz, Math.PI, 0);
-      // Wavy bottom
-      ctx.lineTo(sz, sz * 0.6);
-      for (let wx = sz; wx >= -sz; wx -= 4) {
-        ctx.lineTo(wx, sz * 0.6 + Math.sin(waveT + wx * 0.5) * 3);
-      }
-      ctx.closePath();
-      ctx.fill();
-      ctx.globalAlpha = e.dead ? e.deathTimer / 20 : 1;
-      // Eyes
-      if (e.hitFlash <= 0) {
-        ctx.fillStyle = eyeColor;
-        ctx.beginPath();
-        ctx.arc(-3, -4, 3, 0, Math.PI * 2);
-        ctx.arc(4, -4, 3, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = "#111";
-        ctx.beginPath();
-        ctx.arc(-3, -3, 1.5, 0, Math.PI * 2);
-        ctx.arc(4, -3, 1.5, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    } else if (shape === "imp") {
-      // Fire Imp — small body with horns and tail
-      ctx.fillStyle = bodyColor;
-      ctx.beginPath();
-      ctx.arc(0, 0, sz, 0, Math.PI * 2);
-      ctx.fill();
-      // Horns
-      ctx.fillStyle = e.hitFlash > 0 ? "#ddd" : "#881100";
-      ctx.beginPath();
-      ctx.moveTo(-4, -sz + 1); ctx.lineTo(-6, -sz - 6); ctx.lineTo(-1, -sz + 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(4, -sz + 1); ctx.lineTo(6, -sz - 6); ctx.lineTo(1, -sz + 2);
-      ctx.fill();
-      // Fiery aura
-      if (e.hitFlash <= 0) {
-        const flicker = Math.random() * 0.15;
-        ctx.globalAlpha = (e.dead ? e.deathTimer / 20 : 1) * (0.2 + flicker);
-        ctx.fillStyle = "#ff4400";
-        ctx.beginPath();
-        ctx.arc(0, 0, sz + 3, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.globalAlpha = e.dead ? e.deathTimer / 20 : 1;
-      }
-      // Tail
-      ctx.strokeStyle = bodyColor;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(sz - 2, 3);
-      ctx.quadraticCurveTo(sz + 6, 0, sz + 5, -5 + Math.sin(t * 3) * 2);
-      ctx.stroke();
-    } else if (shape === "slime") {
-      // Lava Slime — blobby shape
-      const squish = 1 + Math.sin(t * 2 + e.x * 0.02) * 0.1;
-      ctx.fillStyle = bodyColor;
-      ctx.beginPath();
-      ctx.ellipse(0, 2, sz * squish, sz * (1 / squish) * 0.85, 0, 0, Math.PI * 2);
-      ctx.fill();
-      // Hot glow on top
-      if (e.hitFlash <= 0) {
-        ctx.fillStyle = "#ff6633";
-        ctx.globalAlpha = (e.dead ? e.deathTimer / 20 : 1) * 0.4;
-        ctx.beginPath();
-        ctx.ellipse(0, -1, sz * 0.6 * squish, sz * 0.3, 0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.globalAlpha = e.dead ? e.deathTimer / 20 : 1;
-      }
-      // Bubbles
-      if (e.hitFlash <= 0 && !e.dead) {
-        ctx.fillStyle = "#ff8844";
-        const bubT = t * 1.5 + e.x;
-        ctx.beginPath();
-        ctx.arc(-3 + Math.sin(bubT) * 2, -2, 1.5, 0, Math.PI * 2);
-        ctx.arc(4, -1 + Math.cos(bubT * 0.7) * 2, 1, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    } else {
-      // Default circle enemy
-      ctx.fillStyle = bodyColor;
-      ctx.beginPath();
-      ctx.arc(0, 0, sz, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = e.hitFlash > 0 ? "#ddd" : "rgba(0,0,0,0.3)";
-      ctx.lineWidth = 2;
-      ctx.stroke();
-    }
-
-    // Draw eyes for shapes that need generic eyes (non-special)
-    if (e.hitFlash <= 0 && !e.dead && !["wisp", "skull", "ghost"].includes(shape)) {
-      const dx = state.playerX - e.x, dy = state.playerY - e.y;
-      const d = Math.sqrt(dx * dx + dy * dy) || 1;
-      const lx = (dx / d) * 1.5, ly = (dy / d) * 1.5;
-      ctx.fillStyle = eyeColor;
-      ctx.beginPath();
-      ctx.arc(-3, -2, 2.5, 0, Math.PI * 2);
-      ctx.arc(3, -2, 2.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "#111";
-      ctx.beginPath();
-      ctx.arc(-3 + lx, -2 + ly, 1.2, 0, Math.PI * 2);
-      ctx.arc(3 + lx, -2 + ly, 1.2, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    ctx.restore();
-
-    // HP bar when damaged
-    if (e.hp < e.maxHp && !e.dead) {
-      const bw = 22, bh = 3, bx2 = sx - bw / 2, by2 = sy - sz - 8 + bob;
-      ctx.fillStyle = "rgba(0,0,0,0.6)";
-      ctx.fillRect(bx2 - 1, by2 - 1, bw + 2, bh + 2);
-      ctx.fillStyle = "#333";
-      ctx.fillRect(bx2, by2, bw, bh);
-      const hpFrac = e.hp / e.maxHp;
-      ctx.fillStyle = hpFrac > 0.5 ? "#c44" : "#f44";
-      ctx.fillRect(bx2, by2, bw * hpFrac, bh);
-    }
-    if (e.dead) ctx.globalAlpha = 1;
   }
 
   // Sword drawn at its computed screen position — matches sword project rendering
@@ -2061,7 +1727,7 @@
     drawParticles();
 
     // Pass 6: Enemies
-    for (const e of enemies) drawEnemyEntity(e);
+    for (const e of enemies) e.draw();
 
     // Pass 7: Player & Sword
     drawPlayer(Math.round(state.playerX - camX), Math.round(state.playerY - camY));
@@ -2258,6 +1924,24 @@
     state.crafted[recipeId] = (state.crafted[recipeId] || 0) + 1;
     renderCraftRecipes(); renderCraftInventory(); updateHUD();
   }
+
+  // ──────── ENEMY GAME REF ────────
+  setEnemyGameRef({
+    get ctx() { return ctx; },
+    get canvas() { return canvas; },
+    get camX() { return camX; },
+    get camY() { return camY; },
+    get state() { return state; },
+    TILE,
+    isSolid,
+    get particles() { return particles; },
+    spawnFloatingText,
+    triggerShake,
+    get damageFlash() { return damageFlash; },
+    set damageFlash(v) { damageFlash = v; },
+    fleeDungeon,
+    $,
+  });
 
   // ──────── WIRING ────────
   $("#btn-start").addEventListener("click", () => { spawnCustomers(); showScreen("shop"); updateHUD(); renderCustomers(); });

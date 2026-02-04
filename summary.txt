@@ -1,0 +1,12 @@
+THIS IS A SUMMARY OF A VIDEO MADE BY GAME ENDAVOR FOR THE EXPECTED ENEMY BEHAVIOR.
+
+
+The video discusses how the developer improved enemy movement and behavior in their game to make combat more engaging and natural. Initially, the developer explored steering behaviors, which combine simple actions, but found a major flaw where opposing vectors could cancel each other out, leaving AI "dumbfounded" by obstacles.
+
+To overcome this, the developer implemented a context-based steering behavior that records and evaluates the desirability of different directions. This system allows the AI to choose the most preferred unobstructed path. To visualize this, a "gizmo" was created, showing desired directions in green (longer lines for more desirable) and undesired directions in red. This ensures that if one path is blocked, the AI can seamlessly choose the next best option.
+
+For combat, the skeletons were given more interesting behaviors beyond just moving directly towards the player. They now move in and out of combat, strafe, and maintain a safe distance. This was achieved by lessening the value of "move towards target" weights as they get closer, allowing other behaviors to take over. A shaping function was also applied to favor sideways movement, causing them to circle their target. The issue of jittery movement when enemies clumped together was resolved by applying a shaping function to the separation logic, encouraging them to move away from each other at an angle rather than directly.
+
+Beyond combat, the wandering logic for enemies was significantly improved. Instead of erratic, random movements, enemies now meander naturally, gradually changing direction while remaining near their spawn point. This is achieved using open simplex noise, which creates smooth randomization and ensures enemies move straight for periods before subtly altering their course. To keep them from wandering too far, their wandering direction is subtly weighted back towards their spawn point when they move beyond a certain radius, creating a smooth, natural transition back.
+
+Finally, the developer experimented with a faction system for NPC targeting, which surprisingly led to an engaging "battle royale" behavior among enemies themselves, highlighting the versatility of the improved AI system.
