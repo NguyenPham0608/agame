@@ -1,13 +1,24 @@
-THIS IS A SUMMARY OF A VIDEO MADE BY GAME ENDAVOR FOR THE EXPECTED ENEMY BEHAVIOR.
+The developer improved combat by refining enemy movement and behaviors through a context-based steering behavior system, which addresses the limitations of simpler steering behaviors.
 
-Real link: https://www.youtube.com/watch?v=6BrZryMz-ac&t=2s
+Addressing Flaws in Steering Behaviors:
 
-The video discusses how the developer improved enemy movement and behavior in their game to make combat more engaging and natural. Initially, the developer explored steering behaviors, which combine simple actions, but found a major flaw where opposing vectors could cancel each other out, leaving AI "dumbfounded" by obstacles.
+The initial steering behavior system suffered from opposing vectors cancelling each other out, leading to AI getting "dumbfounded" and stuck against walls when trying to move away from a player but encountering an obstacle. This meant the AI would barely move, if at all.
+Implementing Context-Based Steering Behavior:
 
-To overcome this, the developer implemented a context-based steering behavior that records and evaluates the desirability of different directions. This system allows the AI to choose the most preferred unobstructed path. To visualize this, a "gizmo" was created, showing desired directions in green (longer lines for more desirable) and undesired directions in red. This ensures that if one path is blocked, the AI can seamlessly choose the next best option.
+This system records the desirability of different directions and allows the AI to choose the most preferred available option.
+The desirability of a direction is determined using a dot product between the considered direction and the desired movement vector. This returns a cosine value ranging from -1 (opposite direction) to 1 (same direction), with 0 for perpendicular movement. This value is then normalized between 0 and 1 to create a desirability scale.
+A visual gizmo helps in development by drawing these "weights":
+Green lines indicate a desire to move in that direction, with longer lines representing higher desirability.
+Red lines indicate no desire to move in that direction.
+If a direction becomes obstructed, the AI automatically picks the next best available option.
+Enhancing Combat-Specific AI Behaviors:
 
-For combat, the skeletons were given more interesting behaviors beyond just moving directly towards the player. They now move in and out of combat, strafe, and maintain a safe distance. This was achieved by lessening the value of "move towards target" weights as they get closer, allowing other behaviors to take over. A shaping function was also applied to favor sideways movement, causing them to circle their target. The issue of jittery movement when enemies clumped together was resolved by applying a shaping function to the separation logic, encouraging them to move away from each other at an angle rather than directly.
-
-Beyond combat, the wandering logic for enemies was significantly improved. Instead of erratic, random movements, enemies now meander naturally, gradually changing direction while remaining near their spawn point. This is achieved using open simplex noise, which creates smooth randomization and ensures enemies move straight for periods before subtly altering their course. To keep them from wandering too far, their wandering direction is subtly weighted back towards their spawn point when they move beyond a certain radius, creating a smooth, natural transition back.
-
-Finally, the developer experimented with a faction system for NPC targeting, which surprisingly led to an engaging "battle royale" behavior among enemies themselves, highlighting the versatility of the improved AI system.
+Strafing and Distance Management: Skeletons are designed to move in and out of combat, strafe around their target, and maintain a safe distance.
+One set of weights moves the AI towards the target.
+As the AI gets closer to the target, the desirability of moving directly towards it is lessened, allowing other behaviors to become dominant.
+A shaping function is applied to the dot product, favoring sideways movement over forward/backward movement when within strafing range, causing the AI to circle the target.
+The "following distance" was offset slightly to prevent skeletons from making perfect circles and bouncing off each other, which created a "Newton's cradle of skellies" effect.
+Eliminating Jitteriness: To prevent AI from rapidly changing direction due to pushing and pulling between entities:
+A shaping function was applied to the separation logic.
+Instead of trying to move directly away from the nearest enemy, they now prefer to do so at an angle.
+These sophisticated movement tweaks and AI improvements resulted in a highly enjoyable combat experience. A tester found it so engaging that they spent over an hour fighting a handful of skeletons and sprouts.

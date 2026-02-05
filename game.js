@@ -60,6 +60,7 @@
   let swordHitEnemies = new Set();
   let swoosh = null; // {cx, cy, outerR, innerR, a1, a2, antiCW, alpha}
   let enemies = [];
+  let attackTokens = new Set(); // enemies currently allowed to rush in & attack
 
   // ──────── VISUAL FEEDBACK SYSTEMS ────────
   let floatingTexts = [];
@@ -535,6 +536,7 @@
     lootBagItems = [];
     lootBagPulse = 0;
     swoosh = null;
+    attackTokens.clear();
 
     dungeonMap = dungeon.map.map((row) => [...row]);
     mapRows = dungeonMap.length;
@@ -1560,7 +1562,25 @@
     }
   }
 
+  function updateEnemyCoordination() {
+    // Assign attack tokens to the N closest in-range enemies
+    const maxTokens = Math.min(2, Math.ceil(state.currentDungeon.difficulty));
+    const alive = [];
+    for (const e of enemies) {
+      if (e.dead) continue;
+      const dx = e.x - state.playerX, dy = e.y - state.playerY;
+      e._distToPlayer = Math.sqrt(dx * dx + dy * dy);
+      if (e._distToPlayer < 320) alive.push(e);
+    }
+    alive.sort((a, b) => a._distToPlayer - b._distToPlayer);
+    attackTokens.clear();
+    for (let i = 0; i < Math.min(maxTokens, alive.length); i++) {
+      attackTokens.add(alive[i]);
+    }
+  }
+
   function updateEnemies() {
+    updateEnemyCoordination();
     for (let i = enemies.length - 1; i >= 0; i--) {
       if (enemies[i].update()) enemies.splice(i, 1);
       if (!state.inDungeon) return;
@@ -1971,6 +1991,7 @@
     isSolid,
     get particles() { return particles; },
     get enemies() { return enemies; },
+    get attackTokens() { return attackTokens; },
     spawnFloatingText,
     triggerShake,
     get damageFlash() { return damageFlash; },

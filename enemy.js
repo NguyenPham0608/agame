@@ -46,6 +46,8 @@ class Enemy {
     this.spawnY = y;
     this.noiseOffset = Math.random() * 1000;
     this.strafeDir = Math.random() < 0.5 ? 1 : -1; // CW or CCW circling
+    this.preferredDist = 55 + Math.random() * 35; // 55-90, prevents Newton's cradle
+    this._distToPlayer = 0; // set by coordinator each frame
 
     // Debug gizmo data (updated each frame by update())
     this._steerScores = new Float32Array(NUM_DIRS);
@@ -67,7 +69,7 @@ class Enemy {
     if (this.attackCooldown > 0) this.attackCooldown--;
     if (this.hitFlash > 0) this.hitFlash--;
 
-    // ── Knockback (unchanged) ──
+    // ── Knockback ──
     const kbSpeed = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
     if (kbSpeed > 0.1) {
       const nx = this.x + this.vx, ny = this.y + this.vy;
@@ -78,7 +80,6 @@ class Enemy {
     this.vx *= 0.78;
     this.vy *= 0.78;
 
-    // Don't steer while in knockback or hit-stun
     if (this.hitFlash > 0 || kbSpeed > 1.5) return false;
 
     // ── Context-Based Steering ──
@@ -86,6 +87,7 @@ class Enemy {
     const dx = state.playerX - this.x;
     const dy = state.playerY - this.y;
     const distToPlayer = Math.sqrt(dx * dx + dy * dy);
+    const hasToken = _g.attackTokens.has(this);
 
     // Normalised direction to player
     const toPx = distToPlayer > 0 ? dx / distToPlayer : 0;
@@ -100,35 +102,80 @@ class Enemy {
     const t = performance.now() / 1000;
     const inRange = distToPlayer < 320;
 
-    // Engagement pulse — creates in-and-out combat rhythm
+    // Engagement pulse — rhythmic in-and-out
     const engagePulse = 0.5 + 0.5 * Math.sin(t * 0.8 + this.noiseOffset * 0.5);
+
+    // Token holders close in aggressively; others hold at preferred distance
+    const idealDist = hasToken ? 18 : this.preferredDist;
+
+    // My angle relative to player (for surround spread)
+    const myAngle = Math.atan2(this.y - state.playerY, this.x - state.playerX);
 
     for (let i = 0; i < NUM_DIRS; i++) {
       const dv = DIR_VECTORS[i];
 
       if (inRange) {
-        // ── CHASE ──
-        // Weight fades as enemy gets closer so strafing takes over
         const chaseDot = dv.x * toPx + dv.y * toPy;
-        const chaseW = Math.max(0, (distToPlayer - 25) / 295);
-        interest[i] += Math.max(0, chaseDot) * chaseW * (0.6 + engagePulse * 0.4);
-
-        // ── STRAFE / CIRCLE ──
         const strafeDot = dv.x * perpX + dv.y * perpY;
-        const strafeW = 1.0 - Math.min(1, distToPlayer / 150);
-        // Forward bias so strafing doesn't devolve into retreating
-        const fwdBias = Math.max(0, chaseDot * 0.3 + 0.7);
-        interest[i] += Math.max(0, strafeDot) * strafeW * 0.8 * fwdBias;
 
-        // ── RETREAT when very close ──
-        if (distToPlayer < 30) {
-          const retreatDot = -(dv.x * toPx + dv.y * toPy);
-          const retreatW = 1 - (distToPlayer / 30);
-          interest[i] += Math.max(0, retreatDot) * retreatW * (1 - engagePulse) * 0.6;
+        if (hasToken) {
+          // ── TOKEN HOLDER: aggressive approach ──
+          // Strong chase that only fades very close
+          const chaseW = Math.max(0, (distToPlayer - 15) / 200);
+          interest[i] += Math.max(0, chaseDot) * chaseW * (0.7 + engagePulse * 0.3);
+
+          // Light strafe when close — circling before striking
+          const strafeW = 1.0 - Math.min(1, distToPlayer / 80);
+          interest[i] += Math.max(0, strafeDot) * strafeW * 0.5;
+
+        } else {
+          // ── NO TOKEN: menacing orbit at preferred distance ──
+          // Chase only if farther than preferred distance
+          if (distToPlayer > idealDist) {
+            const chaseW = Math.max(0, (distToPlayer - idealDist) / (320 - idealDist));
+            interest[i] += Math.max(0, chaseDot) * chaseW * 0.6;
+          }
+
+          // Retreat if closer than preferred distance
+          if (distToPlayer < idealDist) {
+            const retreatDot = -(dv.x * toPx + dv.y * toPy);
+            const retreatW = 1 - (distToPlayer / idealDist);
+            interest[i] += Math.max(0, retreatDot) * retreatW * 0.5;
+          }
+
+          // Strong strafe — squared shaping for sharper sideways preference
+          const strafeW = 1.0 - Math.min(1, Math.abs(distToPlayer - idealDist) / 120);
+          const shaped = Math.max(0, strafeDot);
+          const fwdBias = Math.max(0, chaseDot * 0.2 + 0.8);
+          interest[i] += shaped * shaped * strafeW * 0.9 * fwdBias;
+        }
+
+        // ── SURROUND SPREAD ──
+        // Enemies at similar angles around the player spread apart along the circumference
+        if (distToPlayer > 20) {
+          const enemies = _g.enemies;
+          for (const other of enemies) {
+            if (other === this || other.dead) continue;
+            const otherDist = other._distToPlayer;
+            if (otherDist > 320) continue;
+            const otherAngle = Math.atan2(other.y - state.playerY, other.x - state.playerX);
+            let angleDiff = myAngle - otherAngle;
+            if (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+            if (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+
+            if (Math.abs(angleDiff) < 0.9) {
+              // Push along tangent to spread around the player
+              const sign = angleDiff >= 0 ? 1 : -1;
+              const tangX = -(this.y - state.playerY) / distToPlayer * sign;
+              const tangY = (this.x - state.playerX) / distToPlayer * sign;
+              const spreadDot = dv.x * tangX + dv.y * tangY;
+              const spreadW = 1 - Math.abs(angleDiff) / 0.9;
+              interest[i] += Math.max(0, spreadDot) * spreadW * 0.45;
+            }
+          }
         }
       } else {
         // ── WANDER (noise-driven) ──
-        // Two noise channels give a smooth 2D wander vector
         const wx = smoothNoise(t * 0.5, this.noiseOffset);
         const wy = smoothNoise(t * 0.5, this.noiseOffset + 500);
         const wLen = Math.sqrt(wx * wx + wy * wy) || 1;
@@ -136,7 +183,6 @@ class Enemy {
         interest[i] += Math.max(0, wanderDot) * 0.4;
 
         // ── HOME BIAS ──
-        // Subtly steers back toward spawn point when far away
         const hx = this.spawnX - this.x;
         const hy = this.spawnY - this.y;
         const homeDist = Math.sqrt(hx * hx + hy * hy);
@@ -150,27 +196,24 @@ class Enemy {
       }
 
       // ── SEPARATION (angular shaping) ──
-      // Enemies prefer sliding past each other at an angle, not pushing directly away
       const enemies = _g.enemies;
       for (const other of enemies) {
         if (other === this || other.dead) continue;
         const sex = this.x - other.x;
         const sey = this.y - other.y;
         const seDist = Math.sqrt(sex * sex + sey * sey);
-        if (seDist < 36 && seDist > 0) {
+        if (seDist < 40 && seDist > 0) {
           const awayNx = sex / seDist;
           const awayNy = sey / seDist;
           const awayDot = dv.x * awayNx + dv.y * awayNy;
-          // Perpendicular to away — angular shaping
           const perpADot = Math.abs(dv.x * (-awayNy) + dv.y * awayNx);
           const sepVal = Math.max(0, awayDot * 0.3 + perpADot * 0.7);
-          const sepW = 1 - (seDist / 36);
-          interest[i] += sepVal * sepW * 0.5;
+          const sepW = 1 - (seDist / 40);
+          interest[i] += sepVal * sepW * 0.55;
         }
       }
 
       // ── DANGER: wall detection ──
-      // Check two distances to smoothly avoid walls
       for (let r = 1; r <= 2; r++) {
         const cx = this.x + dv.x * 10 * r;
         const cy = this.y + dv.y * 10 * r;
@@ -192,14 +235,14 @@ class Enemy {
       }
     }
 
-    // Store for debug gizmo
     this._steerScores.set(finalScores);
     this._steerBest = bestI;
 
     // ── Move ──
     if (bestI >= 0 && bestScore > 0.01) {
       const baseSpd = 0.45 + (state.currentDungeon.difficulty - 1) * 0.075;
-      const spdMod = inRange ? 1.0 : 0.5;
+      // Token holders move at full speed; others slightly slower
+      const spdMod = inRange ? (hasToken ? 1.0 : 0.75) : 0.5;
       const mx = this.x + DIR_VECTORS[bestI].x * baseSpd * spdMod;
       const my = this.y + DIR_VECTORS[bestI].y * baseSpd * spdMod;
       if (!_g.isSolid(Math.floor(mx / _g.TILE), Math.floor(my / _g.TILE))) {
@@ -208,8 +251,8 @@ class Enemy {
       }
     }
 
-    // ── Attack on contact ──
-    if (distToPlayer < 18 && this.attackCooldown <= 0) {
+    // ── Attack on contact (only with token) ──
+    if (hasToken && distToPlayer < 18 && this.attackCooldown <= 0) {
       state.hp -= this.damage;
       this.attackCooldown = 60;
       _g.spawnFloatingText(state.playerX, state.playerY - 25, `-${this.damage} HP`, "#e94560", 16);
