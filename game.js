@@ -58,6 +58,7 @@
   let direction = Math.PI;
   const swingCoefficient = 1;
   let swordHitEnemies = new Set();
+  let swoosh = null; // {cx, cy, outerR, innerR, a1, a2, antiCW, alpha}
   let enemies = [];
 
   // ──────── VISUAL FEEDBACK SYSTEMS ────────
@@ -533,6 +534,7 @@
     damageFlash = 0;
     lootBagItems = [];
     lootBagPulse = 0;
+    swoosh = null;
 
     dungeonMap = dungeon.map.map((row) => [...row]);
     mapRows = dungeonMap.length;
@@ -1388,6 +1390,19 @@
     ctx.restore();
   }
 
+  // ──────── FLOATING HAND ────────
+  function drawArm() {
+    // Floating hand at sword grip
+    ctx.fillStyle = "#eebb88";
+    ctx.beginPath();
+    ctx.arc(swordScreenX, swordScreenY, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+    // Subtle outline
+    ctx.strokeStyle = "rgba(0,0,0,0.2)";
+    ctx.lineWidth = 0.8;
+    ctx.stroke();
+  }
+
   // ──────── MINIMAP ────────
   function drawMinimap() {
     const scale = 3;
@@ -1487,6 +1502,25 @@
     swordScreenX += Math.cos(swordAngle) * SWORD_ARM_LENGTH;
     swordScreenY += Math.sin(swordAngle) * SWORD_ARM_LENGTH;
     swordAngle += swordSwingDir * 0.4;
+
+    // Swoosh arc
+    if (swingFrames < SWING_DURATION && Math.abs(swordSwingVel) > 0.06) {
+      const sweep = Math.min(Math.abs(swordSwingVel) * 4.5, 2.0);
+      const dir = swordSwingVel > 0 ? 1 : -1;
+      swoosh = {
+        cx: swordScreenX,
+        cy: swordScreenY,
+        outerR: SWORD_BLADE_LENGTH + 10,
+        innerR: SWORD_BLADE_LENGTH * 0.25,
+        a1: swordAngle - dir * sweep,
+        a2: swordAngle,
+        antiCW: dir < 0,
+        alpha: 0.6,
+      };
+    } else if (swoosh) {
+      swoosh.alpha -= 0.17;
+      if (swoosh.alpha <= 0) swoosh = null;
+    }
   }
 
   // Exact swing from sword project — direction-aware targeting
@@ -1575,16 +1609,16 @@
     ctx.closePath();
     ctx.stroke();
     ctx.restore();
-    // Swing trail
-    if (swingFrames < SWING_DURATION && Math.abs(swordSwingVel) > 0.08) {
-      ctx.save();
-      ctx.translate(swordScreenX, swordScreenY);
-      ctx.strokeStyle = `rgba(255,255,255,${Math.min(0.3, Math.abs(swordSwingVel) * 0.15)})`;
-      ctx.lineWidth = 2;
+    // Swoosh crescent
+    if (swoosh && swoosh.alpha > 0) {
+      ctx.globalAlpha = swoosh.alpha;
+      ctx.fillStyle = "#fff";
       ctx.beginPath();
-      ctx.arc(0, 0, SWORD_BLADE_LENGTH * 0.7, swordAngle - 0.3, swordAngle + 0.3);
-      ctx.stroke();
-      ctx.restore();
+      ctx.arc(swoosh.cx, swoosh.cy, swoosh.outerR, swoosh.a1, swoosh.a2, swoosh.antiCW);
+      ctx.arc(swoosh.cx, swoosh.cy, swoosh.innerR, swoosh.a2, swoosh.a1, !swoosh.antiCW);
+      ctx.closePath();
+      ctx.fill();
+      ctx.globalAlpha = 1;
     }
   }
 
@@ -1729,8 +1763,9 @@
     // Pass 6: Enemies
     for (const e of enemies) e.draw();
 
-    // Pass 7: Player & Sword
+    // Pass 7: Player, Arm & Sword
     drawPlayer(Math.round(state.playerX - camX), Math.round(state.playerY - camY));
+    drawArm();
     drawSword();
 
     // Pass 8: Floating text (world-space)

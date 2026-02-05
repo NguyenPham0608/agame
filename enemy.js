@@ -46,6 +46,10 @@ class Enemy {
     this.spawnY = y;
     this.noiseOffset = Math.random() * 1000;
     this.strafeDir = Math.random() < 0.5 ? 1 : -1; // CW or CCW circling
+
+    // Debug gizmo data (updated each frame by update())
+    this._steerScores = new Float32Array(NUM_DIRS);
+    this._steerBest = -1;
   }
 
   get name() { return this.type ? this.type.name : "Monster"; }
@@ -179,13 +183,18 @@ class Enemy {
     // ── Pick best direction ──
     let bestI = -1;
     let bestScore = -1;
+    const finalScores = new Float32Array(NUM_DIRS);
     for (let i = 0; i < NUM_DIRS; i++) {
-      const score = interest[i] * (1 - danger[i]);
-      if (score > bestScore) {
-        bestScore = score;
+      finalScores[i] = interest[i] * (1 - danger[i]);
+      if (finalScores[i] > bestScore) {
+        bestScore = finalScores[i];
         bestI = i;
       }
     }
+
+    // Store for debug gizmo
+    this._steerScores.set(finalScores);
+    this._steerBest = bestI;
 
     // ── Move ──
     if (bestI >= 0 && bestScore > 0.01) {
@@ -285,7 +294,55 @@ class Enemy {
     ctx.restore();
 
     this._drawHPBar(ctx, sx, sy, sz, bob);
+    this._drawSteeringGizmo(ctx, sx, sy + bob);
     if (this.dead) ctx.globalAlpha = 1;
+  }
+
+  _drawSteeringGizmo(ctx, sx, sy) {
+    if (this.dead || this._steerBest < 0) return;
+
+    // Find max score for normalising line lengths
+    let maxS = 0;
+    for (let i = 0; i < NUM_DIRS; i++) {
+      if (this._steerScores[i] > maxS) maxS = this._steerScores[i];
+    }
+    if (maxS < 0.001) return;
+
+    const LINE_MAX = 30; // max gizmo line length in px
+
+    for (let i = 0; i < NUM_DIRS; i++) {
+      const score = this._steerScores[i];
+      const norm = score / maxS; // 0..1
+      const len = norm * LINE_MAX;
+      if (len < 0.5) continue; // skip near-zero
+
+      const dv = DIR_VECTORS[i];
+      const ex = sx + dv.x * len;
+      const ey = sy + dv.y * len;
+
+      if (i === this._steerBest) {
+        // Selected direction — lime green, thicker
+        ctx.strokeStyle = "#0f0";
+        ctx.lineWidth = 2.5;
+        ctx.globalAlpha = 0.9;
+      } else {
+        // Gradient: pastel green (high) → red (low)
+        const r = Math.round(220 * (1 - norm) + 80 * norm);
+        const g = Math.round(80 * (1 - norm) + 220 * norm);
+        const b = Math.round(80);
+        ctx.strokeStyle = `rgb(${r},${g},${b})`;
+        ctx.lineWidth = 1.5;
+        ctx.globalAlpha = 0.45 + norm * 0.35;
+      }
+
+      ctx.beginPath();
+      ctx.moveTo(sx, sy);
+      ctx.lineTo(ex, ey);
+      ctx.stroke();
+    }
+
+    ctx.globalAlpha = this.dead ? this.deathTimer / 20 : 1;
+    ctx.lineWidth = 1;
   }
 
   _drawBody(ctx, shape, bodyColor, eyeColor, sz, t) {
