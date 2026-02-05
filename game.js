@@ -53,7 +53,7 @@
   let swordSwingTarget = 0;
   let swingFrames = 70;
   const SWING_DURATION = 40;
-  const SWORD_ARM_LENGTH = 5;
+  const SWORD_ARM_LENGTH = 15;
   const SWORD_BLADE_LENGTH = 40;
   let direction = Math.PI;
   const swingCoefficient = 1;
@@ -1488,17 +1488,17 @@
       swordSwingTarget = direction;
     }
 
-    swordScreenY -= 10;
+    swordScreenY -= 0;
     swordAngle = Math.atan2(mouseScreenY - swordScreenY, mouseScreenX - swordScreenX) + Math.PI / 2;
-    swordScreenX += Math.cos(swordAngle) * SWORD_ARM_LENGTH;
-    swordScreenY += Math.sin(swordAngle) * SWORD_ARM_LENGTH;
+    swordScreenX += Math.cos(swordAngle) * SWORD_ARM_LENGTH * Math.sign(direction);
+    swordScreenY += Math.sin(swordAngle) * SWORD_ARM_LENGTH * Math.sign(direction);
     swordAngle -= Math.PI / 2;
 
     swordSwingVel += 0.02 * (swordSwingTarget - swordSwingDir);
     swordSwingVel *= 0.85;
     swordSwingDir += swordSwingVel;
 
-    swordAngle += swordSwingDir * 0.6;
+    swordAngle += swordSwingDir * 0.8;
     swordScreenX += Math.cos(swordAngle) * SWORD_ARM_LENGTH;
     swordScreenY += Math.sin(swordAngle) * SWORD_ARM_LENGTH;
     swordAngle += swordSwingDir * 0.4;
