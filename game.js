@@ -94,6 +94,7 @@
     dungeon: $("#dungeon-screen"),
     trade: $("#trade-screen"),
     craft: $("#craft-screen"),
+    editor: $("#editor-screen"),
   };
   const canvas = $("#dungeon-canvas");
   const ctx = canvas.getContext("2d");
@@ -511,8 +512,8 @@
   }
 
   // ──────── ENTER DUNGEON ────────
-  function enterDungeon(id) {
-    const dungeon = GAME_DATA.dungeons.find((d) => d.id === id);
+  function enterDungeon(id, customLevel) {
+    const dungeon = customLevel || GAME_DATA.dungeons.find((d) => d.id === id);
     if (!dungeon) return;
 
     state.currentDungeon = dungeon;
@@ -2008,6 +2009,12 @@
   $("#btn-trade").addEventListener("click", showTraderSelect);
   $("#btn-craft").addEventListener("click", enterCraft);
   $("#btn-end-day").addEventListener("click", endDay);
+  $("#btn-editor").addEventListener("click", () => showScreen("editor"));
+  $("#btn-editor-exit").addEventListener("click", () => { showScreen("shop"); updateHUD(); renderCustomers(); });
+  $("#btn-editor-test").addEventListener("click", () => {
+    const level = LevelEditor.exportLevel();
+    enterDungeon(null, level);
+  });
   $("#btn-flee").addEventListener("click", () => fleeDungeon(false));
   $("#btn-result-continue").addEventListener("click", () => {
     $("#dungeon-result").classList.remove("active");

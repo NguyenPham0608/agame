@@ -42,6 +42,50 @@
         <button id="btn-trade" class="btn-action">Visit Traders</button>
         <button id="btn-craft" class="btn-action">Craft Items</button>
         <button id="btn-end-day" class="btn-action btn-secondary">End Day</button>
+        <button id="btn-editor" class="btn-action btn-secondary">Level Editor</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Level Editor Screen -->
+  <div id="editor-screen" class="screen">
+    <div class="hud">
+      <div class="hud-left">
+        <span id="editor-theme-label">Theme: Forest</span>
+        <button id="btn-theme-cycle" class="btn-small">Change Theme</button>
+      </div>
+      <div class="hud-right">
+        <button id="btn-editor-test" class="btn-small">Test Level</button>
+        <button id="btn-editor-clear" class="btn-small btn-danger">Clear</button>
+        <button id="btn-editor-exit" class="btn-small">Exit</button>
+      </div>
+    </div>
+    <div class="editor-layout">
+      <canvas id="editor-canvas" width="800" height="600"></canvas>
+      <div class="editor-tools">
+        <h3>Tools</h3>
+        <div class="tool-group">
+          <button class="tool-btn active" data-tool="wall">Wall</button>
+          <button class="tool-btn" data-tool="floor">Erase</button>
+          <button class="tool-btn" data-tool="enemy">Enemy</button>
+          <button class="tool-btn" data-tool="start">Start</button>
+          <button class="tool-btn" data-tool="exit">Exit</button>
+          <button class="tool-btn" data-tool="loot">Loot</button>
+          <button class="tool-btn" data-tool="gold">Gold</button>
+          <button class="tool-btn" data-tool="health">Health</button>
+          <button class="tool-btn" data-tool="trap">Trap</button>
+        </div>
+        <h3>Brush</h3>
+        <div class="tool-group">
+          <button class="brush-btn active" data-brush="square">Square</button>
+          <button class="brush-btn" data-brush="circle">Circle</button>
+          <button class="brush-btn" data-brush="curve-tl">Curve TL</button>
+          <button class="brush-btn" data-brush="curve-tr">Curve TR</button>
+          <button class="brush-btn" data-brush="curve-bl">Curve BL</button>
+          <button class="brush-btn" data-brush="curve-br">Curve BR</button>
+        </div>
+        <h3>Size: <span id="brush-size-label">2</span></h3>
+        <input type="range" id="brush-size" min="1" max="5" value="2">
       </div>
     </div>
   </div>
@@ -147,6 +191,7 @@
 
   <script src="levels.js"></script>
   <script src="enemy.js"></script>
+  <script src="editor.js"></script>
   <script src="game.js"></script>
 </body>
 </html>

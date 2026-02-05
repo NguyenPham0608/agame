@@ -239,3 +239,37 @@ body {
 
 /* Dungeon screen layout */
 #dungeon-screen { position: relative; overflow: hidden; }
+
+/* Level Editor */
+.editor-layout {
+  display: flex; flex: 1; overflow: hidden;
+}
+#editor-canvas {
+  flex: 1; background: #111; cursor: crosshair;
+}
+.editor-tools {
+  width: 180px; padding: 15px;
+  background: var(--bg-light);
+  border-left: 1px solid rgba(255,255,255,0.1);
+  overflow-y: auto;
+}
+.editor-tools h3 {
+  margin: 12px 0 8px; color: var(--text-dim);
+  font-size: 0.8rem; text-transform: uppercase; letter-spacing: 1px;
+}
+.editor-tools h3:first-child { margin-top: 0; }
+.tool-group {
+  display: flex; flex-wrap: wrap; gap: 6px;
+}
+.tool-btn, .brush-btn {
+  padding: 8px 10px; font-size: 0.75rem; border-radius: 4px;
+  background: var(--panel); color: var(--text); border: 1px solid rgba(255,255,255,0.1);
+  cursor: pointer; transition: background 0.15s;
+}
+.tool-btn:hover, .brush-btn:hover { background: #1a4a7a; }
+.tool-btn.active, .brush-btn.active {
+  background: var(--accent); color: #fff; border-color: var(--accent);
+}
+#brush-size {
+  width: 100%; margin-top: 6px; accent-color: var(--accent);
+}
