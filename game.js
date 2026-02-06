@@ -44,6 +44,71 @@
   let floorNoise = [];
   let particles = [];
 
+  // ──────── TILE IMAGES (15-tile auto-tiling) ────────
+  // Place your tileset images in images/walls/{rock,brick,obsidian,tree}/
+  // Named: 1.png through 16.png (matching TILE_PATTERNS)
+  // 1=top-left corner, 2=top edge, 3=top-right corner
+  // 4=left edge, 5=center(interior), 6=right edge
+  // 7=bottom-left corner, 8=bottom edge, 9=bottom-right corner
+  // 10-16=special cases (isolated, strips, etc.)
+  const WALL_IMAGES = {
+    rock: {},
+    brick: {},
+    obsidian: {},
+    tree: {},
+  };
+  let wallImagesLoaded = false;
+
+  function loadWallImages(callback) {
+    const wallStyles = ['rock', 'brick', 'obsidian', 'tree'];
+    let totalImages = wallStyles.length * 16; // 16 variants per style
+    let loadedCount = 0;
+    let failedCount = 0;
+
+    for (const style of wallStyles) {
+      for (let variant = 1; variant <= 16; variant++) {
+        const img = new Image();
+        img.onload = () => {
+          WALL_IMAGES[style][variant] = img;
+          loadedCount++;
+          if (loadedCount + failedCount === totalImages) {
+            wallImagesLoaded = loadedCount > 0;
+            console.log(`Wall images loaded: ${loadedCount}/${totalImages}`);
+            if (callback) callback();
+          }
+        };
+        img.onerror = () => {
+          failedCount++;
+          if (loadedCount + failedCount === totalImages) {
+            wallImagesLoaded = loadedCount > 0;
+            console.log(`Wall images loaded: ${loadedCount}/${totalImages} (${failedCount} missing - using procedural fallback)`);
+            if (callback) callback();
+          }
+        };
+        img.src = `images/walls/${style}/${variant}.png`;
+      }
+    }
+
+    // If no images at all, callback immediately
+    if (totalImages === 0 && callback) callback();
+  }
+
+  function hasWallImage(style, variant) {
+    return WALL_IMAGES[style] && WALL_IMAGES[style][variant];
+  }
+
+  function drawWallImage(style, variant, sx, sy) {
+    if (hasWallImage(style, variant)) {
+      // Draw with 1px overlap to prevent gaps when zoomed
+      ctx.drawImage(WALL_IMAGES[style][variant], sx, sy, TILE + 1, TILE + 1);
+      return true;
+    }
+    return false;
+  }
+
+  // Load wall images on startup (async, fallback to procedural if missing)
+  loadWallImages();
+
   // ──────── SWORD & COMBAT ────────
   let mouseScreenX = 0, mouseScreenY = 0;
   let swordScreenX = 0, swordScreenY = 0;
@@ -775,6 +840,42 @@
   }
 
   // ═══════════════════════════════════════
+  //  AUTO-TILING SYSTEM (15-tile)
+  // ═══════════════════════════════════════
+  // Pattern format: [Top][Right][Bottom][Left] where 0=exposed edge, 1=connected
+  const TILE_PATTERNS = {
+    '0110': 1,  // Top-left outer corner
+    '0111': 2,  // Top edge
+    '0011': 3,  // Top-right outer corner
+    '1110': 4,  // Left edge
+    '1111': 5,  // Center (all sides connected) - INTERIOR
+    '1011': 6,  // Right edge
+    '1100': 7,  // Bottom-left outer corner
+    '1101': 8,  // Bottom edge
+    '1001': 9,  // Bottom-right outer corner
+    '0010': 10, // Top isolated (only bottom connects)
+    '0100': 11, // Only right connects
+    '0001': 12, // Only left connects
+    '1000': 13, // Bottom isolated (only top connects)
+    '0101': 14, // Horizontal strip (left and right connect)
+    '1010': 15, // Vertical strip (top and bottom connect)
+    '0000': 16, // Fully isolated (single tile)
+  };
+
+  function getAutoTilePattern(col, row) {
+    const hasTop = isWall(col, row - 1);
+    const hasRight = isWall(col + 1, row);
+    const hasBottom = isWall(col, row + 1);
+    const hasLeft = isWall(col - 1, row);
+    const pattern = `${hasTop ? '1' : '0'}${hasRight ? '1' : '0'}${hasBottom ? '1' : '0'}${hasLeft ? '1' : '0'}`;
+    return TILE_PATTERNS[pattern] || 5;
+  }
+
+  function isInteriorTile(col, row) {
+    return getAutoTilePattern(col, row) === 5;
+  }
+
+  // ═══════════════════════════════════════
   //  THEMED FLOOR DRAWING
   // ═══════════════════════════════════════
 
@@ -935,6 +1036,14 @@
 
   function drawWall(col, row, sx, sy, dungeon, nb) {
     const style = dungeon.theme.wallStyle;
+    const pattern = getAutoTilePattern(col, row);
+
+    // Try to draw with tileset image first
+    if (drawWallImage(style, pattern, sx, sy)) {
+      return; // Image drawn successfully
+    }
+
+    // Fallback to procedural drawing
     if (style === "rock") drawWall_rock(col, row, sx, sy, dungeon, nb);
     else if (style === "tree") drawWall_tree(col, row, sx, sy, dungeon, nb);
     else if (style === "brick") drawWall_brick(col, row, sx, sy, dungeon, nb);
@@ -945,59 +1054,99 @@
     const t = dungeon.theme;
     const n = floorNoise[row]?.[col] || 0;
     const rng = seededRand(row * 271 + col * 97);
+    const pattern = getAutoTilePattern(col, row);
+    const isInterior = pattern === 5;
 
-    // Base rock
+    // Base rock - seamless for interior tiles
     ctx.fillStyle = t.wallBase;
     ctx.fillRect(sx, sy, TILE, TILE);
 
-    // Rocky shape — irregular polygon fill
-    ctx.fillStyle = t.wallHighlight;
-    ctx.beginPath();
-    ctx.moveTo(sx + 2 + rng() * 4, sy + 1 + rng() * 3);
-    ctx.lineTo(sx + TILE - 2 - rng() * 4, sy + rng() * 4);
-    ctx.lineTo(sx + TILE - 1 - rng() * 3, sy + TILE - 2 - rng() * 4);
-    ctx.lineTo(sx + 1 + rng() * 4, sy + TILE - 1 - rng() * 3);
-    ctx.closePath();
-    ctx.fill();
-
-    // Cracks
-    ctx.strokeStyle = t.wallShadow;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    const crx = sx + 6 + rng() * 12, cry = sy + 6 + rng() * 12;
-    ctx.moveTo(crx, cry);
-    ctx.lineTo(crx + rng() * 10 - 3, cry + rng() * 12);
-    ctx.lineTo(crx + rng() * 8 - 2, cry + rng() * 10 + 4);
-    ctx.stroke();
-
-    // Ore veins
-    if (n > 0.75) {
-      ctx.strokeStyle = t.oreVeinColor;
-      ctx.lineWidth = 1.5;
+    if (isInterior) {
+      // Interior: seamless rock texture, subtle variation only
+      ctx.fillStyle = t.wallHighlight;
+      ctx.fillRect(sx, sy, TILE, TILE);
+      // Subtle internal cracks
+      if (n > 0.6) {
+        ctx.strokeStyle = t.wallShadow;
+        ctx.globalAlpha = 0.3;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        const crx = sx + 8 + rng() * 16, cry = sy + 8 + rng() * 16;
+        ctx.moveTo(crx, cry);
+        ctx.lineTo(crx + rng() * 8, cry + rng() * 8);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+      // Ore veins (sparse)
+      if (n > 0.85) {
+        ctx.strokeStyle = t.oreVeinColor;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(sx + rng() * 20 + 6, sy + rng() * 20 + 6);
+        ctx.lineTo(sx + rng() * 20 + 6, sy + rng() * 20 + 6);
+        ctx.stroke();
+        ctx.lineWidth = 1;
+      }
+    } else {
+      // Edge tile: full rocky detail
+      ctx.fillStyle = t.wallHighlight;
       ctx.beginPath();
-      ctx.moveTo(sx + rng() * 20 + 6, sy + rng() * 20 + 6);
-      ctx.lineTo(sx + rng() * 20 + 6, sy + rng() * 20 + 6);
-      ctx.stroke();
+      ctx.moveTo(sx + 2 + rng() * 4, sy + 1 + rng() * 3);
+      ctx.lineTo(sx + TILE - 2 - rng() * 4, sy + rng() * 4);
+      ctx.lineTo(sx + TILE - 1 - rng() * 3, sy + TILE - 2 - rng() * 4);
+      ctx.lineTo(sx + 1 + rng() * 4, sy + TILE - 1 - rng() * 3);
+      ctx.closePath();
+      ctx.fill();
+
+      // Cracks on edges
+      ctx.strokeStyle = t.wallShadow;
       ctx.lineWidth = 1;
-    }
+      ctx.beginPath();
+      const crx = sx + 6 + rng() * 12, cry = sy + 6 + rng() * 12;
+      ctx.moveTo(crx, cry);
+      ctx.lineTo(crx + rng() * 10 - 3, cry + rng() * 12);
+      ctx.lineTo(crx + rng() * 8 - 2, cry + rng() * 10 + 4);
+      ctx.stroke();
 
-    // Top highlight
-    if (!nb.n) {
-      ctx.fillStyle = "rgba(255,255,255,0.1)";
-      ctx.fillRect(sx, sy, TILE, 3);
-    }
-    // Bottom shadow
-    if (!nb.s) {
-      ctx.fillStyle = "rgba(0,0,0,0.2)";
-      ctx.fillRect(sx, sy + TILE - 3, TILE, 3);
-    }
+      // Ore veins
+      if (n > 0.75) {
+        ctx.strokeStyle = t.oreVeinColor;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(sx + rng() * 20 + 6, sy + rng() * 20 + 6);
+        ctx.lineTo(sx + rng() * 20 + 6, sy + rng() * 20 + 6);
+        ctx.stroke();
+        ctx.lineWidth = 1;
+      }
 
-    // Wooden support beam at edges
-    if (!nb.s && n > 0.6) {
-      ctx.fillStyle = t.beamColor;
-      ctx.fillRect(sx + 14, sy + TILE - 6, 4, 6);
-      ctx.fillStyle = "rgba(0,0,0,0.15)";
-      ctx.fillRect(sx + 14, sy + TILE - 6, 4, 2);
+      // Top highlight (only if top is exposed)
+      if (!nb.n) {
+        ctx.fillStyle = "rgba(255,255,255,0.15)";
+        ctx.fillRect(sx, sy, TILE, 4);
+      }
+      // Bottom shadow (only if bottom is exposed)
+      if (!nb.s) {
+        ctx.fillStyle = "rgba(0,0,0,0.25)";
+        ctx.fillRect(sx, sy + TILE - 4, TILE, 4);
+      }
+      // Left edge
+      if (!nb.w) {
+        ctx.fillStyle = "rgba(255,255,255,0.08)";
+        ctx.fillRect(sx, sy, 3, TILE);
+      }
+      // Right edge
+      if (!nb.e) {
+        ctx.fillStyle = "rgba(0,0,0,0.15)";
+        ctx.fillRect(sx + TILE - 3, sy, 3, TILE);
+      }
+
+      // Wooden support beam at bottom edges
+      if (!nb.s && n > 0.6) {
+        ctx.fillStyle = t.beamColor;
+        ctx.fillRect(sx + 14, sy + TILE - 6, 4, 6);
+        ctx.fillStyle = "rgba(0,0,0,0.15)";
+        ctx.fillRect(sx + 14, sy + TILE - 6, 4, 2);
+      }
     }
   }
 
@@ -1005,56 +1154,83 @@
     const t = dungeon.theme;
     const n = floorNoise[row]?.[col] || 0;
     const rng = seededRand(row * 431 + col * 173);
+    const pattern = getAutoTilePattern(col, row);
+    const isInterior = pattern === 5;
 
     // Ground under tree
     ctx.fillStyle = dungeon.floorColor;
     ctx.fillRect(sx, sy, TILE, TILE);
 
-    // Trunk
-    const trunkW = 8 + rng() * 6;
-    const trunkX = sx + (TILE - trunkW) / 2 + rng() * 4 - 2;
-    ctx.fillStyle = t.trunkColor;
-    ctx.fillRect(trunkX, sy + 4, trunkW, TILE - 4);
-    // Bark texture
-    ctx.fillStyle = t.trunkDark;
-    ctx.fillRect(trunkX + 2, sy + 8, 2, TILE - 12);
-    ctx.fillRect(trunkX + trunkW - 3, sy + 12, 2, TILE - 16);
+    if (isInterior) {
+      // Interior: dense forest canopy - less trunk, more foliage blending
+      const cx = sx + TILE / 2;
+      const cy = sy + TILE / 2;
 
-    // Canopy — draw large circle that overflows tile (clipped by neighbor awareness)
-    const cx = sx + TILE / 2 + rng() * 4 - 2;
-    const cy = sy + 4 + rng() * 4;
-    const cr = 14 + rng() * 6;
+      // Solid canopy fill for interior
+      ctx.fillStyle = t.canopyColor;
+      ctx.fillRect(sx, sy, TILE, TILE);
 
-    // Shadow on ground
-    ctx.fillStyle = "rgba(0,0,0,0.15)";
-    ctx.beginPath();
-    ctx.ellipse(cx + 2, cy + cr + 4, cr * 0.8, cr * 0.3, 0, 0, Math.PI * 2);
-    ctx.fill();
+      // Subtle variation
+      ctx.fillStyle = t.canopyDark;
+      ctx.beginPath();
+      ctx.arc(cx + rng() * 8 - 4, cy + rng() * 8 - 4, 8 + rng() * 6, 0, Math.PI * 2);
+      ctx.fill();
 
-    // Main canopy
-    ctx.fillStyle = t.canopyColor;
-    ctx.beginPath();
-    ctx.arc(cx, cy, cr, 0, Math.PI * 2);
-    ctx.fill();
+      // Light patches
+      if (n > 0.5) {
+        ctx.fillStyle = t.canopyLight;
+        ctx.beginPath();
+        ctx.arc(cx - 6 + rng() * 12, cy - 6 + rng() * 12, 4 + rng() * 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    } else {
+      // Edge tiles: individual trees with trunks visible
+      // Trunk
+      const trunkW = 8 + rng() * 6;
+      const trunkX = sx + (TILE - trunkW) / 2 + rng() * 4 - 2;
+      ctx.fillStyle = t.trunkColor;
+      ctx.fillRect(trunkX, sy + 4, trunkW, TILE - 4);
+      // Bark texture
+      ctx.fillStyle = t.trunkDark;
+      ctx.fillRect(trunkX + 2, sy + 8, 2, TILE - 12);
+      ctx.fillRect(trunkX + trunkW - 3, sy + 12, 2, TILE - 16);
 
-    // Canopy highlight
-    ctx.fillStyle = t.canopyLight;
-    ctx.beginPath();
-    ctx.arc(cx - 3, cy - 3, cr * 0.6, 0, Math.PI * 2);
-    ctx.fill();
+      // Canopy
+      const cx = sx + TILE / 2 + rng() * 4 - 2;
+      const cy = sy + 4 + rng() * 4;
+      const cr = 14 + rng() * 6;
 
-    // Canopy dark clusters
-    ctx.fillStyle = t.canopyDark;
-    ctx.beginPath();
-    ctx.arc(cx + 4 + rng() * 4, cy + 3 + rng() * 4, cr * 0.4, 0, Math.PI * 2);
-    ctx.fill();
+      // Shadow on ground
+      ctx.fillStyle = "rgba(0,0,0,0.15)";
+      ctx.beginPath();
+      ctx.ellipse(cx + 2, cy + cr + 4, cr * 0.8, cr * 0.3, 0, 0, Math.PI * 2);
+      ctx.fill();
 
-    // Small leaves detail
-    if (n > 0.5) {
+      // Main canopy
+      ctx.fillStyle = t.canopyColor;
+      ctx.beginPath();
+      ctx.arc(cx, cy, cr, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Canopy highlight
       ctx.fillStyle = t.canopyLight;
       ctx.beginPath();
-      ctx.arc(cx - cr * 0.5, cy + rng() * 6 - 3, 3 + rng() * 3, 0, Math.PI * 2);
+      ctx.arc(cx - 3, cy - 3, cr * 0.6, 0, Math.PI * 2);
       ctx.fill();
+
+      // Canopy dark clusters
+      ctx.fillStyle = t.canopyDark;
+      ctx.beginPath();
+      ctx.arc(cx + 4 + rng() * 4, cy + 3 + rng() * 4, cr * 0.4, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Small leaves detail
+      if (n > 0.5) {
+        ctx.fillStyle = t.canopyLight;
+        ctx.beginPath();
+        ctx.arc(cx - cr * 0.5, cy + rng() * 6 - 3, 3 + rng() * 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
   }
 
@@ -1062,12 +1238,14 @@
     const t = dungeon.theme;
     const n = floorNoise[row]?.[col] || 0;
     const rng = seededRand(row * 521 + col * 89);
+    const pattern = getAutoTilePattern(col, row);
+    const isInterior = pattern === 5;
 
     // Base
     ctx.fillStyle = t.brickColor;
     ctx.fillRect(sx, sy, TILE, TILE);
 
-    // Brick pattern
+    // Brick pattern - seamless across all tiles
     ctx.strokeStyle = t.mortarColor;
     ctx.lineWidth = 1;
     // Horizontal mortar
@@ -1077,9 +1255,10 @@
       ctx.lineTo(sx + TILE, sy + by);
       ctx.stroke();
     }
-    // Vertical mortar (offset every other row)
+    // Vertical mortar (offset every other row based on world position for seamless tiling)
     for (let by = 0; by < TILE; by += 8) {
-      const offset = (Math.floor(by / 8) % 2 === 0) ? 0 : TILE / 2;
+      const worldRow = row * 4 + Math.floor(by / 8);
+      const offset = (worldRow % 2 === 0) ? 0 : TILE / 2;
       ctx.beginPath();
       ctx.moveTo(sx + offset, sy + by);
       ctx.lineTo(sx + offset, sy + by + 8);
@@ -1097,34 +1276,51 @@
     if (n > 0.7) ctx.fillRect(sx + 2, sy + 2, 14, 6);
     if (n < 0.3) ctx.fillRect(sx + 16, sy + 10, 14, 6);
 
-    // Moss patches
-    if (n > 0.85 && !nb.n) {
-      ctx.fillStyle = t.mossColor;
-      ctx.beginPath();
-      ctx.arc(sx + 6 + rng() * 20, sy + 2 + rng() * 6, 3 + rng() * 3, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    if (isInterior) {
+      // Interior: just the seamless brick pattern, minimal decoration
+      if (n > 0.95) {
+        // Rare skull in interior
+        ctx.fillStyle = t.skullColor;
+        ctx.beginPath();
+        ctx.arc(sx + TILE / 2, sy + TILE / 2, 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = t.mortarColor;
+        ctx.fillRect(sx + TILE / 2 - 2, sy + TILE / 2 - 1, 1.5, 1.5);
+        ctx.fillRect(sx + TILE / 2 + 0.5, sy + TILE / 2 - 1, 1.5, 1.5);
+      }
+    } else {
+      // Edge tiles: moss, crumbling, edge effects
+      // Moss patches at top edges
+      if (n > 0.85 && !nb.n) {
+        ctx.fillStyle = t.mossColor;
+        ctx.beginPath();
+        ctx.arc(sx + 6 + rng() * 20, sy + 2 + rng() * 6, 3 + rng() * 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
 
-    // Crumbling edge
-    if (!nb.s && n > 0.6) {
-      ctx.fillStyle = dungeon.floorColor;
-      ctx.fillRect(sx + rng() * 12, sy + TILE - 3, 4 + rng() * 6, 3);
-    }
+      // Crumbling bottom edge
+      if (!nb.s && n > 0.6) {
+        ctx.fillStyle = dungeon.floorColor;
+        ctx.fillRect(sx + rng() * 12, sy + TILE - 3, 4 + rng() * 6, 3);
+      }
 
-    // Skull decoration
-    if (n > 0.92) {
-      ctx.fillStyle = t.skullColor;
-      ctx.beginPath();
-      ctx.arc(sx + TILE / 2, sy + TILE / 2, 4, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = t.mortarColor;
-      ctx.fillRect(sx + TILE / 2 - 2, sy + TILE / 2 - 1, 1.5, 1.5);
-      ctx.fillRect(sx + TILE / 2 + 0.5, sy + TILE / 2 - 1, 1.5, 1.5);
-    }
+      // Skull decoration on edges
+      if (n > 0.92) {
+        ctx.fillStyle = t.skullColor;
+        ctx.beginPath();
+        ctx.arc(sx + TILE / 2, sy + TILE / 2, 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = t.mortarColor;
+        ctx.fillRect(sx + TILE / 2 - 2, sy + TILE / 2 - 1, 1.5, 1.5);
+        ctx.fillRect(sx + TILE / 2 + 0.5, sy + TILE / 2 - 1, 1.5, 1.5);
+      }
 
-    // Top/bottom edges
-    if (!nb.n) { ctx.fillStyle = "rgba(255,255,255,0.06)"; ctx.fillRect(sx, sy, TILE, 2); }
-    if (!nb.s) { ctx.fillStyle = "rgba(0,0,0,0.15)"; ctx.fillRect(sx, sy + TILE - 2, TILE, 2); }
+      // Edge highlights/shadows
+      if (!nb.n) { ctx.fillStyle = "rgba(255,255,255,0.1)"; ctx.fillRect(sx, sy, TILE, 3); }
+      if (!nb.s) { ctx.fillStyle = "rgba(0,0,0,0.2)"; ctx.fillRect(sx, sy + TILE - 3, TILE, 3); }
+      if (!nb.w) { ctx.fillStyle = "rgba(255,255,255,0.06)"; ctx.fillRect(sx, sy, 2, TILE); }
+      if (!nb.e) { ctx.fillStyle = "rgba(0,0,0,0.12)"; ctx.fillRect(sx + TILE - 2, sy, 2, TILE); }
+    }
   }
 
   function drawWall_obsidian(col, row, sx, sy, dungeon, nb) {
@@ -1132,72 +1328,101 @@
     const n = floorNoise[row]?.[col] || 0;
     const rng = seededRand(row * 613 + col * 211);
     const time = performance.now() / 1500;
+    const pattern = getAutoTilePattern(col, row);
+    const isInterior = pattern === 5;
+    const glowAlpha = 0.3 + 0.2 * Math.sin(time + col * 0.5 + row * 0.3);
 
     // Base dark rock
     ctx.fillStyle = t.rockColor;
     ctx.fillRect(sx, sy, TILE, TILE);
 
-    // Jagged rocky shape
-    ctx.fillStyle = t.rockHighlight;
-    ctx.beginPath();
-    ctx.moveTo(sx + rng() * 6, sy + rng() * 4);
-    ctx.lineTo(sx + TILE / 2 + rng() * 8 - 4, sy + rng() * 3);
-    ctx.lineTo(sx + TILE - rng() * 6, sy + rng() * 6);
-    ctx.lineTo(sx + TILE - rng() * 4, sy + TILE - rng() * 5);
-    ctx.lineTo(sx + rng() * 4, sy + TILE - rng() * 4);
-    ctx.closePath();
-    ctx.fill();
+    if (isInterior) {
+      // Interior: seamless obsidian with subtle lava glow
+      ctx.fillStyle = t.rockHighlight;
+      ctx.fillRect(sx, sy, TILE, TILE);
 
-    // Glowing lava cracks
-    const glowAlpha = 0.3 + 0.2 * Math.sin(time + col * 0.5 + row * 0.3);
-    ctx.strokeStyle = `rgba(255,68,0,${glowAlpha})`;
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    const cx2 = sx + 4 + rng() * 20, cy2 = sy + 4 + rng() * 20;
-    ctx.moveTo(cx2, cy2);
-    ctx.lineTo(cx2 + rng() * 14 - 4, cy2 + rng() * 14 - 2);
-    ctx.lineTo(cx2 + rng() * 12 - 2, cy2 + rng() * 12 + 4);
-    ctx.stroke();
-
-    if (n > 0.6) {
-      ctx.strokeStyle = `rgba(255,102,34,${glowAlpha * 0.7})`;
-      ctx.beginPath();
-      ctx.moveTo(sx + rng() * 28 + 2, sy + rng() * 28 + 2);
-      ctx.lineTo(sx + rng() * 28 + 2, sy + rng() * 28 + 2);
-      ctx.stroke();
-    }
-    ctx.lineWidth = 1;
-
-    // Jagged top edge
-    if (!nb.n) {
-      ctx.fillStyle = t.rockColor;
-      ctx.beginPath();
-      ctx.moveTo(sx, sy);
-      for (let x = 0; x <= TILE; x += 4) {
-        ctx.lineTo(sx + x, sy - 2 - rng() * 5);
+      // Subtle internal lava cracks
+      if (n > 0.4) {
+        ctx.strokeStyle = `rgba(255,68,0,${glowAlpha * 0.5})`;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        const cx2 = sx + 8 + rng() * 16, cy2 = sy + 8 + rng() * 16;
+        ctx.moveTo(cx2, cy2);
+        ctx.lineTo(cx2 + rng() * 10, cy2 + rng() * 10);
+        ctx.stroke();
+        ctx.lineWidth = 1;
       }
-      ctx.lineTo(sx + TILE, sy);
+    } else {
+      // Edge tiles: full jagged detail
+      ctx.fillStyle = t.rockHighlight;
+      ctx.beginPath();
+      ctx.moveTo(sx + rng() * 6, sy + rng() * 4);
+      ctx.lineTo(sx + TILE / 2 + rng() * 8 - 4, sy + rng() * 3);
+      ctx.lineTo(sx + TILE - rng() * 6, sy + rng() * 6);
+      ctx.lineTo(sx + TILE - rng() * 4, sy + TILE - rng() * 5);
+      ctx.lineTo(sx + rng() * 4, sy + TILE - rng() * 4);
       ctx.closePath();
       ctx.fill();
-      // Orange glow at edge
-      ctx.fillStyle = `rgba(255,68,0,${glowAlpha * 0.3})`;
-      ctx.fillRect(sx, sy, TILE, 3);
-    }
 
-    // Bottom lava glow
-    if (!nb.s) {
-      ctx.fillStyle = `rgba(255,68,0,${glowAlpha * 0.4})`;
-      ctx.fillRect(sx, sy + TILE - 3, TILE, 3);
+      // Glowing lava cracks on edges
+      ctx.strokeStyle = `rgba(255,68,0,${glowAlpha})`;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      const cx2 = sx + 4 + rng() * 20, cy2 = sy + 4 + rng() * 20;
+      ctx.moveTo(cx2, cy2);
+      ctx.lineTo(cx2 + rng() * 14 - 4, cy2 + rng() * 14 - 2);
+      ctx.lineTo(cx2 + rng() * 12 - 2, cy2 + rng() * 12 + 4);
+      ctx.stroke();
+
+      if (n > 0.6) {
+        ctx.strokeStyle = `rgba(255,102,34,${glowAlpha * 0.7})`;
+        ctx.beginPath();
+        ctx.moveTo(sx + rng() * 28 + 2, sy + rng() * 28 + 2);
+        ctx.lineTo(sx + rng() * 28 + 2, sy + rng() * 28 + 2);
+        ctx.stroke();
+      }
+      ctx.lineWidth = 1;
+
+      // Jagged top edge
+      if (!nb.n) {
+        ctx.fillStyle = t.rockColor;
+        ctx.beginPath();
+        ctx.moveTo(sx, sy);
+        for (let x = 0; x <= TILE; x += 4) {
+          ctx.lineTo(sx + x, sy - 2 - rng() * 5);
+        }
+        ctx.lineTo(sx + TILE, sy);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = `rgba(255,68,0,${glowAlpha * 0.4})`;
+        ctx.fillRect(sx, sy, TILE, 4);
+      }
+
+      // Bottom lava glow
+      if (!nb.s) {
+        ctx.fillStyle = `rgba(255,68,0,${glowAlpha * 0.5})`;
+        ctx.fillRect(sx, sy + TILE - 4, TILE, 4);
+      }
+      // Left edge glow
+      if (!nb.w) {
+        ctx.fillStyle = `rgba(255,68,0,${glowAlpha * 0.25})`;
+        ctx.fillRect(sx, sy, 3, TILE);
+      }
+      // Right edge glow
+      if (!nb.e) {
+        ctx.fillStyle = `rgba(255,68,0,${glowAlpha * 0.35})`;
+        ctx.fillRect(sx + TILE - 3, sy, 3, TILE);
+      }
     }
   }
 
   // ──────── SHADOW PASS ────────
-  function drawShadows(startCol, endCol, startRow, endRow) {
+  function drawShadows(startCol, endCol, startRow, endRow, rcamX, rcamY) {
     for (let r = startRow; r <= endRow; r++) {
       for (let c = startCol; c <= endCol; c++) {
         if (!isWall(c, r)) continue;
-        const sx = Math.round(c * TILE - camX);
-        const sy = Math.round(r * TILE - camY);
+        const sx = c * TILE - rcamX;
+        const sy = r * TILE - rcamY;
 
         // Shadow below wall
         if (r + 1 < mapRows && !isWall(c, r + 1)) {
@@ -1737,6 +1962,8 @@
 
     // Apply zoom + screen shake to world rendering
     ctx.save();
+    // Disable image smoothing for crisp pixels when zoomed
+    ctx.imageSmoothingEnabled = false;
     // Zoom from center of canvas
     ctx.translate(canvas.width / 2, canvas.height / 2);
     ctx.scale(zoomLevel, zoomLevel);
@@ -1745,27 +1972,30 @@
 
     const viewW = canvas.width / zoomLevel;
     const viewH = canvas.height / zoomLevel;
-    const startCol = Math.max(0, Math.floor(camX / TILE) - 1);
-    const endCol = Math.min(mapCols - 1, Math.floor((camX + viewW) / TILE) + 2);
-    const startRow = Math.max(0, Math.floor(camY / TILE) - 1);
-    const endRow = Math.min(mapRows - 1, Math.floor((camY + viewH) / TILE) + 2);
+    // Round camera once to prevent sub-pixel gaps between tiles
+    const rcamX = Math.floor(camX);
+    const rcamY = Math.floor(camY);
+    const startCol = Math.max(0, Math.floor(rcamX / TILE) - 1);
+    const endCol = Math.min(mapCols - 1, Math.floor((rcamX + viewW) / TILE) + 2);
+    const startRow = Math.max(0, Math.floor(rcamY / TILE) - 1);
+    const endRow = Math.min(mapRows - 1, Math.floor((rcamY + viewH) / TILE) + 2);
 
     // Pass 1: Floors
     for (let r = startRow; r <= endRow; r++) {
       for (let c = startCol; c <= endCol; c++) {
         if (dungeonMap[r][c] === 1) continue;
-        drawFloor(c, r, Math.round(c * TILE - camX), Math.round(r * TILE - camY), dungeon);
+        drawFloor(c, r, c * TILE - rcamX, r * TILE - rcamY, dungeon);
       }
     }
 
     // Pass 2: Shadows
-    drawShadows(startCol, endCol, startRow, endRow);
+    drawShadows(startCol, endCol, startRow, endRow, rcamX, rcamY);
 
     // Pass 3: Items on floor (before walls so walls layer on top)
     for (let r = startRow; r <= endRow; r++) {
       for (let c = startCol; c <= endCol; c++) {
         if (dungeonMap[r][c] === 1) continue;
-        drawItems(c, r, Math.round(c * TILE - camX), Math.round(r * TILE - camY), dungeon);
+        drawItems(c, r, c * TILE - rcamX, r * TILE - rcamY, dungeon);
       }
     }
 
@@ -1774,7 +2004,7 @@
       for (let c = startCol; c <= endCol; c++) {
         if (dungeonMap[r][c] !== 1) continue;
         const nb = getWallNeighbors(c, r);
-        drawWall(c, r, Math.round(c * TILE - camX), Math.round(r * TILE - camY), dungeon, nb);
+        drawWall(c, r, c * TILE - rcamX, r * TILE - rcamY, dungeon, nb);
       }
     }
 
@@ -1785,7 +2015,7 @@
     for (const e of enemies) e.draw();
 
     // Pass 7: Player, Arm & Sword
-    drawPlayer(Math.round(state.playerX - camX), Math.round(state.playerY - camY));
+    drawPlayer(Math.round(state.playerX - rcamX), Math.round(state.playerY - rcamY));
     drawArm();
     drawSword();
 
