@@ -48,6 +48,10 @@ class Enemy {
     this.strafeDir = Math.random() < 0.5 ? 1 : -1; // CW or CCW circling
     this._distToPlayer = 0; // set by coordinator each frame
 
+    // Smooth movement — lerped heading prevents jitter
+    this.headX = 0;
+    this.headY = 0;
+
     // Attack style
     this.attackStyle = type ? (type.attackStyle || "contact") : "contact";
     this.preferredDist = this.attackStyle === "projectile"
@@ -71,6 +75,17 @@ class Enemy {
     this.stuckCounter = 0;
     this.lastX = x;
     this.lastY = y;
+
+    // Material inventory — dropped on death for player to collect
+    this.materials = [];
+    if (_g?.state?.currentDungeon?.loot) {
+      const lootTable = _g.state.currentDungeon.loot;
+      const count = 2 + Math.floor(Math.random() * 2); // 2-3 materials
+      for (let i = 0; i < count; i++) {
+        const mat = lootTable[Math.floor(Math.random() * lootTable.length)];
+        this.materials.push(mat);
+      }
+    }
 
     // Debug gizmo data (updated each frame by update())
     this._steerScores = new Float32Array(NUM_DIRS);
@@ -190,11 +205,67 @@ class Enemy {
     const distToPlayer = Math.sqrt(dx * dx + dy * dy);
     const hasToken = _g.attackTokens.has(this);
 
-    // Normalised direction to player
+    // Normalised direct line to player
     const toPx = distToPlayer > 0 ? dx / distToPlayer : 0;
     const toPy = distToPlayer > 0 ? dy / distToPlayer : 0;
 
-    // Perpendicular (for strafing / circling)
+    // ── Line-of-sight check (Bresenham-style ray) ──
+    // Only use flow field when a wall blocks the direct path to the player
+    let hasLOS = true;
+    {
+      const TILE = _g.TILE;
+      const steps = Math.ceil(distToPlayer / (TILE * 0.5));
+      for (let s = 1; s < steps; s++) {
+        const frac = s / steps;
+        const rx = this.x + dx * frac;
+        const ry = this.y + dy * frac;
+        if (_g.isSolid(Math.floor(rx / TILE), Math.floor(ry / TILE))) {
+          hasLOS = false;
+          break;
+        }
+      }
+    }
+
+    // ── Flow field nudge (only when LOS blocked or stuck) ──
+    // Computes a gentle navigation hint from BFS — blended in, never dominates
+    let ffNudgeX = 0, ffNudgeY = 0;
+    const ff = _g.flowField;
+    const myRow = Math.floor(this.y / _g.TILE);
+    const myCol = Math.floor(this.x / _g.TILE);
+    if (ff && ff[myRow] && ff[myRow][myCol] < 9999) {
+      let gx = 0, gy = 0;
+      const myDist = ff[myRow][myCol];
+      for (let dr = -1; dr <= 1; dr++) {
+        for (let dc = -1; dc <= 1; dc++) {
+          if (dr === 0 && dc === 0) continue;
+          const nr = myRow + dr, nc = myCol + dc;
+          if (nr < 0 || nr >= _g.mapRows || nc < 0 || nc >= _g.mapCols) continue;
+          if (!ff[nr]) continue;
+          const nd = ff[nr][nc];
+          if (nd < myDist) {
+            gx += dc * (myDist - nd);
+            gy += dr * (myDist - nd);
+          }
+        }
+      }
+      const glen = Math.sqrt(gx * gx + gy * gy);
+      if (glen > 0.01) {
+        ffNudgeX = gx / glen;
+        ffNudgeY = gy / glen;
+      }
+    }
+
+    // Blend: in open space use direct line; when blocked, blend in flow field
+    // This keeps movement natural in the open and smart near walls
+    const ffBlend = !hasLOS ? 0.85 : (this.stuckCounter > 20 ? 0.6 : 0.0);
+    const chaseX = toPx * (1 - ffBlend) + ffNudgeX * ffBlend;
+    const chaseY = toPy * (1 - ffBlend) + ffNudgeY * ffBlend;
+    const chaseLen = Math.sqrt(chaseX * chaseX + chaseY * chaseY) || 1;
+    const navX = chaseX / chaseLen;
+    const navY = chaseY / chaseLen;
+
+    // Perpendicular to player direction (for strafing / circling)
+    // Always based on direct player direction so circling feels natural
     const perpX = -toPy * this.strafeDir;
     const perpY = toPx * this.strafeDir;
 
@@ -218,39 +289,42 @@ class Enemy {
       const dv = DIR_VECTORS[i];
 
       if (inRange) {
-        const chaseDot = dv.x * toPx + dv.y * toPy;
+        // Chase uses navX/navY (blended direct + flow field near walls)
+        const chaseDot = dv.x * navX + dv.y * navY;
+        // Strafe uses direct perpendicular to player — always feels natural
         const strafeDot = dv.x * perpX + dv.y * perpY;
 
         if (hasToken) {
           // ── TOKEN HOLDER: aggressive approach ──
-          // Strong chase that only fades very close
-          const chaseW = Math.max(0, (distToPlayer - 15) / 200);
+          // Strong chase that lessens as they get close (per video technique)
+          const chaseW = Math.max(0, (distToPlayer - 15) / 150);
           interest[i] += Math.max(0, chaseDot) * chaseW * (0.7 + engagePulse * 0.3);
 
-          // Light strafe when close — circling before striking
-          const strafeW = 1.0 - Math.min(1, distToPlayer / 80);
-          interest[i] += Math.max(0, strafeDot) * strafeW * 0.5;
+          // Strafe takes over up close — squared shaping favors sideways strongly
+          const strafeW = 1.0 - Math.min(1, distToPlayer / 70);
+          const shapedStrafe = Math.max(0, strafeDot);
+          interest[i] += shapedStrafe * shapedStrafe * strafeW * 0.7;
 
         } else {
           // ── NO TOKEN: menacing orbit at preferred distance ──
-          // Chase only if farther than preferred distance
+          // Chase weight lessens as they approach idealDist (smooth handoff to strafe)
           if (distToPlayer > idealDist) {
             const chaseW = Math.max(0, (distToPlayer - idealDist) / (320 - idealDist));
             interest[i] += Math.max(0, chaseDot) * chaseW * 0.6;
           }
 
-          // Retreat if closer than preferred distance
+          // Retreat — uses direct player dir, not flow field (feels natural)
           if (distToPlayer < idealDist) {
             const retreatDot = -(dv.x * toPx + dv.y * toPy);
             const retreatW = 1 - (distToPlayer / idealDist);
             interest[i] += Math.max(0, retreatDot) * retreatW * 0.5;
           }
 
-          // Strong strafe — squared shaping for sharper sideways preference
+          // Strafe — squared shaping creates strong sideways preference (video technique)
+          // "favors sideways movement instead of forward and backwards"
           const strafeW = 1.0 - Math.min(1, Math.abs(distToPlayer - idealDist) / 120);
-          const shaped = Math.max(0, strafeDot);
-          const fwdBias = Math.max(0, chaseDot * 0.2 + 0.8);
-          interest[i] += shaped * shaped * strafeW * 0.9 * fwdBias;
+          const shapedStrafe = Math.max(0, strafeDot);
+          interest[i] += shapedStrafe * shapedStrafe * strafeW * 0.9;
         }
 
         // ── SURROUND SPREAD ──
@@ -278,14 +352,19 @@ class Enemy {
           }
         }
       } else {
-        // ── WANDER (noise-driven) ──
-        const wx = smoothNoise(t * 0.5, this.noiseOffset);
-        const wy = smoothNoise(t * 0.5, this.noiseOffset + 500);
-        const wLen = Math.sqrt(wx * wx + wy * wy) || 1;
-        const wanderDot = dv.x * (wx / wLen) + dv.y * (wy / wLen);
+        // ── WANDER (noise-driven meandering per video technique) ──
+        // Use smooth noise to gently sway a forward direction over time.
+        // "Rather than picking a random point, have them meander about,
+        //  gradually changing their direction"
+        const wanderAngle = smoothNoise(t * 0.4, this.noiseOffset) * Math.PI;
+        const wx = Math.cos(wanderAngle);
+        const wy = Math.sin(wanderAngle);
+        const wanderDot = dv.x * wx + dv.y * wy;
         interest[i] += Math.max(0, wanderDot) * 0.4;
 
-        // ── HOME BIAS ──
+        // ── HOME TETHER (smooth, weighted pull — not a hard boundary) ──
+        // "Weighing their wandering direction back towards spawn whenever
+        //  they start getting too far away"
         const hx = this.spawnX - this.x;
         const hy = this.spawnY - this.y;
         const homeDist = Math.sqrt(hx * hx + hy * hy);
@@ -293,8 +372,9 @@ class Enemy {
           const homeNx = hx / homeDist;
           const homeNy = hy / homeDist;
           const homeDot = dv.x * homeNx + dv.y * homeNy;
-          const homeW = Math.min(1, (homeDist - 48) / 96);
-          interest[i] += Math.max(0, homeDot) * homeW * 0.6;
+          // Smooth ramp — starts gentle, grows stronger with distance
+          const homeW = Math.min(1, (homeDist - 48) / 80);
+          interest[i] += Math.max(0, homeDot) * homeW * homeW * 0.7;
         }
       }
 
@@ -363,13 +443,28 @@ class Enemy {
     this._steerScores.set(finalScores);
     this._steerBest = bestI;
 
-    // ── Move ──
+    // ── Smooth movement (lerped heading prevents jitter) ──
     if (bestI >= 0 && bestScore > 0.01) {
+      const desiredX = DIR_VECTORS[bestI].x;
+      const desiredY = DIR_VECTORS[bestI].y;
+
+      // Lerp heading toward desired direction — smooth, natural turning
+      // Faster turn rate when stuck or in danger, slower in open for organic feel
+      const turnRate = this.stuckCounter > 20 ? 0.35 : 0.18;
+      this.headX += (desiredX - this.headX) * turnRate;
+      this.headY += (desiredY - this.headY) * turnRate;
+
+      // Re-normalize
+      const hLen = Math.sqrt(this.headX * this.headX + this.headY * this.headY);
+      if (hLen > 0.01) {
+        this.headX /= hLen;
+        this.headY /= hLen;
+      }
+
       const baseSpd = 0.45 + (state.currentDungeon.difficulty - 1) * 0.075;
-      // Token holders move at full speed; others slightly slower
       const spdMod = inRange ? (hasToken ? 1.0 : 0.75) : 0.5;
-      const mx = this.x + DIR_VECTORS[bestI].x * baseSpd * spdMod;
-      const my = this.y + DIR_VECTORS[bestI].y * baseSpd * spdMod;
+      const mx = this.x + this.headX * baseSpd * spdMod;
+      const my = this.y + this.headY * baseSpd * spdMod;
       if (!_g.isSolid(Math.floor(mx / _g.TILE), Math.floor(my / _g.TILE))) {
         this.x = mx;
         this.y = my;
@@ -385,6 +480,9 @@ class Enemy {
     }
     this.lastX = this.x;
     this.lastY = this.y;
+
+    // ── Occasional strafe direction flip (prevents robotic same-direction circling) ──
+    if (inRange && Math.random() < 0.003) this.strafeDir *= -1;
 
     // ── Attack dispatch (only with token) ──
     if (hasToken && this.attackCooldown <= 0) {
@@ -522,6 +620,12 @@ class Enemy {
     if (this.hp <= 0) {
       this.dead = true;
       this.deathTimer = 20;
+
+      // Spawn material drops with scatter effect
+      if (_g && _g.spawnMaterialDrops && this.materials.length > 0) {
+        _g.spawnMaterialDrops(this.x, this.y, this.materials);
+      }
+
       _g.spawnFloatingText(this.x, this.y - 25, `${this.name} Defeated!`, "#f5c842", 16);
       _g.triggerShake(6);
       for (let j = 0; j < 8; j++) {

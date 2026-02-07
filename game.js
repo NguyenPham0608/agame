@@ -46,6 +46,9 @@
   let floorNoise = [];
   let particles = [];
   let enemyProjectiles = [];
+  let droppedItems = [];    // Items scattered on death (for player to collect)
+  let flowField = [];       // BFS distance field from player (for enemy navigation)
+  let flowFieldAge = 0;     // frames since last recompute
 
   // ──────── TILE IMAGES (15-tile auto-tiling) ────────
   // Place your tileset images in images/walls/{rock,brick,obsidian,tree}/
@@ -61,6 +64,10 @@
     tree: {},
   };
   let wallImagesLoaded = false;
+
+  // Material images for dropped items
+  const MATERIAL_IMAGES = {};
+  let materialImagesLoaded = false;
 
   function loadWallImages(callback) {
     const wallStyles = ['rock', 'brick', 'obsidian', 'tree'];
@@ -96,6 +103,37 @@
     if (totalImages === 0 && callback) callback();
   }
 
+  function loadMaterialImages(callback) {
+    const materials = Object.keys(GAME_DATA.materials);
+    let totalImages = materials.length;
+    let loadedCount = 0;
+    let failedCount = 0;
+
+    for (const matId of materials) {
+      const img = new Image();
+      img.onload = () => {
+        MATERIAL_IMAGES[matId] = img;
+        loadedCount++;
+        if (loadedCount + failedCount === totalImages) {
+          materialImagesLoaded = loadedCount > 0;
+          console.log(`Material images: ${loadedCount}/${totalImages}`);
+          if (callback) callback();
+        }
+      };
+      img.onerror = () => {
+        failedCount++;
+        if (loadedCount + failedCount === totalImages) {
+          materialImagesLoaded = loadedCount > 0;
+          console.log(`Material images: ${loadedCount}/${totalImages} (${failedCount} using emoji fallback)`);
+          if (callback) callback();
+        }
+      };
+      img.src = `images/materials/${matId}.png`;
+    }
+
+    if (totalImages === 0 && callback) callback();
+  }
+
   function hasWallImage(style, variant) {
     return WALL_IMAGES[style] && WALL_IMAGES[style][variant];
   }
@@ -109,8 +147,10 @@
     return false;
   }
 
-  // Load wall images on startup (async, fallback to procedural if missing)
-  loadWallImages();
+  // Load wall and material images on startup (async, fallback to procedural/emoji if missing)
+  loadWallImages(() => {
+    loadMaterialImages();
+  });
 
   // ──────── SWORD & COMBAT ────────
   let mouseScreenX = 0, mouseScreenY = 0;
@@ -504,6 +544,29 @@
     }
   }
 
+  // ──────── MATERIAL DROP SPAWNING ────────
+  function spawnMaterialDrops(x, y, materials) {
+    // Spread items in a circle at 20px radius from death location
+    const radius = 20;
+    const count = materials.length;
+    for (let i = 0; i < count; i++) {
+      const angle = (i / count) * Math.PI * 2;
+      const dropX = x + Math.cos(angle) * radius;
+      const dropY = y + Math.sin(angle) * radius;
+      droppedItems.push({
+        x: dropX,
+        y: dropY,
+        vx: 0,
+        vy: 0,
+        materialId: materials[i],
+        life: 0,
+        maxLife: 15,
+        collected: false,
+        pulsePhase: Math.random() * Math.PI * 2,
+      });
+    }
+  }
+
   // ──────── PARTICLES ────────
   function spawnDust(x, y) {
     for (let i = 0; i < 2; i++) {
@@ -542,6 +605,43 @@
       if (p.life <= 0) { particles.splice(i, 1); }
     }
     if (particles.length > 120) particles.splice(0, particles.length - 120);
+  }
+
+  function updateDroppedItems() {
+    for (let i = droppedItems.length - 1; i >= 0; i--) {
+      const item = droppedItems[i];
+      if (item.collected) {
+        droppedItems.splice(i, 1);
+        continue;
+      }
+
+      // Physics: scatter then settle
+      if (item.life > 0) {
+        item.x += item.vx;
+        item.y += item.vy;
+        item.vx *= 0.85;
+        item.vy *= 0.85;
+        item.life--;
+      }
+
+      // Collection check (circular collision with player)
+      const dx = item.x - state.playerX;
+      const dy = item.y - state.playerY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < 20) {
+        item.collected = true;
+        addMaterial(item.materialId, 1);
+        state.lootCollected.push(item.materialId);
+
+        const material = GAME_DATA.materials[item.materialId];
+        spawnFloatingText(item.x, item.y - 20,
+          `${matEmoji(item.materialId)} ${matName(item.materialId)}`,
+          material?.color || "#4ecca3", 14);
+        spawnFlyingIcon(item.x, item.y, matEmoji(item.materialId),
+          material?.color || "#4ecca3");
+        spawnSparkles(item.x, item.y, material?.color || "#4ecca3", 8);
+      }
+    }
   }
 
   function drawParticles() {
@@ -595,6 +695,46 @@
       }
       ctx.fill();
     }
+  }
+
+  function drawDroppedItem(item, cx, cy) {
+    const t = performance.now() / 1000;
+    const pulse = 0.7 + 0.3 * Math.sin(t * 3 + item.pulsePhase);
+    const material = GAME_DATA.materials[item.materialId];
+    const color = material?.color || "#4ecca3";
+
+    // Settlement bounce animation as item lands
+    const settleProgress = 1 - (item.life / item.maxLife);
+    const bounce = settleProgress < 0.5 ? Math.sin(settleProgress * Math.PI * 4) * 2 : 0;
+    cy -= bounce;
+
+    // Glow (subtle, smaller than static material pickups)
+    ctx.globalAlpha = 0.15 * pulse;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 10, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    // Core visual: image or emoji fallback
+    if (materialImagesLoaded && MATERIAL_IMAGES[item.materialId]) {
+      ctx.globalAlpha = pulse;
+      ctx.drawImage(MATERIAL_IMAGES[item.materialId], cx - 6, cy - 6, 12, 12);
+    } else {
+      ctx.font = "12px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.globalAlpha = pulse;
+      ctx.fillText(material?.emoji || "?", cx, cy);
+    }
+
+    // Small white sparkle on top
+    ctx.globalAlpha = 0.5 * pulse;
+    ctx.fillStyle = "#fff";
+    ctx.beginPath();
+    ctx.arc(cx, cy - 4, 1, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
   }
 
   // ──────── ENEMY PROJECTILES ────────
@@ -707,6 +847,9 @@
     collectedTiles = new Set();
     particles = [];
     enemyProjectiles = [];
+    droppedItems = [];
+    flowField = [];
+    flowFieldAge = 999; // force immediate compute
     floatingTexts = [];
     flyingIcons = [];
     shakeIntensity = 0;
@@ -2013,6 +2156,45 @@
     }
   }
 
+  // ──────── FLOW FIELD (BFS from player for global navigation) ────────
+  function computeFlowField() {
+    // Initialize distance field
+    if (flowField.length !== mapRows) {
+      flowField = [];
+      for (let r = 0; r < mapRows; r++) flowField[r] = new Int16Array(mapCols).fill(9999);
+    } else {
+      for (let r = 0; r < mapRows; r++) flowField[r].fill(9999);
+    }
+
+    const pr = Math.floor(state.playerY / TILE);
+    const pc = Math.floor(state.playerX / TILE);
+    if (pr < 0 || pr >= mapRows || pc < 0 || pc >= mapCols) return;
+    if (isSolid(pc, pr)) return;
+
+    // BFS flood fill from player tile
+    flowField[pr][pc] = 0;
+    const queue = [pr, pc];  // flat array: [r0, c0, r1, c1, ...]
+    let head = 0;
+
+    while (head < queue.length) {
+      const cr = queue[head++];
+      const cc = queue[head++];
+      const nextDist = flowField[cr][cc] + 1;
+
+      // 4-directional expansion (prevents corner-cutting through walls)
+      for (let d = 0; d < 4; d++) {
+        const nr = cr + (d === 0 ? -1 : d === 1 ? 1 : 0);
+        const nc = cc + (d === 2 ? -1 : d === 3 ? 1 : 0);
+        if (nr < 0 || nr >= mapRows || nc < 0 || nc >= mapCols) continue;
+        if (flowField[nr][nc] <= nextDist) continue;
+        if (isSolid(nc, nr)) continue;
+        flowField[nr][nc] = nextDist;
+        queue.push(nr, nc);
+      }
+    }
+    flowFieldAge = 0;
+  }
+
   function updateEnemyCoordination() {
     // Assign attack tokens to the N closest in-range enemies
     const maxTokens = Math.min(2, Math.ceil(state.currentDungeon.difficulty));
@@ -2031,6 +2213,10 @@
   }
 
   function updateEnemies() {
+    // Recompute flow field every 8 frames (~7.5 updates/sec)
+    flowFieldAge++;
+    if (flowFieldAge >= 8) computeFlowField();
+
     updateEnemyCoordination();
     for (let i = enemies.length - 1; i >= 0; i--) {
       if (enemies[i].update()) enemies.splice(i, 1);
@@ -2177,6 +2363,7 @@
     // Update systems
     updateParticles();
     updateEnemyProjectiles();
+    updateDroppedItems();
     if (!state.inDungeon) return;
     updateFloatingTexts();
     updateFlyingIcons();
@@ -2226,6 +2413,16 @@
       for (let c = startCol; c <= endCol; c++) {
         if (dungeonMap[r][c] === 1) continue;
         drawItems(c, r, c * TILE - rcamX, r * TILE - rcamY, dungeon);
+      }
+    }
+
+    // Pass 4.5: Dropped items from enemies
+    for (const item of droppedItems) {
+      if (item.collected) continue;
+      const sx = item.x - rcamX;
+      const sy = item.y - rcamY;
+      if (sx > -20 && sx < viewW + 20 && sy > -20 && sy < viewH + 20) {
+        drawDroppedItem(item, sx, sy);
       }
     }
 
@@ -2452,12 +2649,16 @@
     get camY() { return camY; },
     get state() { return state; },
     TILE,
+    get mapRows() { return mapRows; },
+    get mapCols() { return mapCols; },
     isSolid,
+    get flowField() { return flowField; },
     get particles() { return particles; },
     get enemyProjectiles() { return enemyProjectiles; },
     get enemies() { return enemies; },
     get attackTokens() { return attackTokens; },
     spawnFloatingText,
+    spawnMaterialDrops,
     triggerShake,
     get damageFlash() { return damageFlash; },
     set damageFlash(v) { damageFlash = v; },

@@ -1,0 +1,127 @@
+
+Oh no. I accidentally created  a Newton’s Cradle of Skellies. 
+Howdy! And welcome to Game Endeavor.  Where I make devlogs with an emphasis  
+on game design and technique. I’m developing an open world RPG  
+where you’ll meet lovable characters, explore  dark and treacherous dungeons, and build a base  
+to stash your precious cheese. One of the more  difficult tasks that I’ve ever come across as  
+a developer is how to handle enemy movement in a  way that’s convincing and engaging for the player. 
+This is especially difficult because there are a  lot of factors to consider such as what direction  
+they should move towards to reach their goal.  What entities are nearby so they don’t clump  
+up together into a hyperdense singuskellety.  The nearby environment and everything else  
+around them, and even once they have figured  out how they should move, they need to do so  
+smoothly so that they don’t jitter around like  me after a long night of binge coding and coffee. 
+Even though combat isn’t the primary focus  of my game, not nearly as much as exploration  
+and the roleplaying. I still want it to  be enjoyable, because it is what builds  
+tension and keeps the player engaged as they  explore the world and uncovers its secrets. 
+If you look into AI movement, then one of  the first things you may encounter is what’s  
+known as boids and steering behaviors.  This is not what I’m using to be clear,  
+but it is where I started and is what helped me to  develop the technique that I am currently using. 
+Steering Behaviors
+Steering behaviors are where you combine  simple actions such as move to this point,  
+keep away from these points, and move in  the same direction as these other points.  
+On their own these behaviors are very simple and  unimpressive. But when combined and tweaked in  
+specific ways, they create something that I was  quite stunned by when I first encountered them. 
+But after implementing this some time ago in a  prototype for another game, I quickly noticed  
+some major flaws with the system. The biggest  glaring one being how opposing vectors can cancel  
+each other out to cause pretty silly situations  where the AI needs to run away from the player,  
+but there’s a wall immediately opposite to  them. So they just stand there completely  
+dumbfounded by the existence of this wall as  they wait for their slowly impending doom. 
+Ideally you would want them to realize that  they have other options available to them,  
+such as stepping ever so slightly to the side  and continuing along that path for a bit.  
+But since there’s only one vector that  has complete control over how they move,  
+they just sit there barely moving if at all. 
+I searched for a while about how I could  improve this, or alternatives to AI movement  
+and found a context based steering behavior  that inspired what I am currently using.  
+This is very similar to the behavior that I  mentioned before, except it keeps a record of how  
+desirable different directions are and chooses the  preferred direction that it can actually perform. 
+For example, say I set down a carrot for  Truffles to snack upon, odds are he’s going to  
+move directly towards the carrot. That would be  the obvious choice. But hold on there Truffles,  
+not so fast. He could, in theory, step off to the  side for a bit, make a big half circle around the  
+carrot, and then go in for the snack. It would  be rather silly, yes. But it’s still an option. 
+So to help truffles evaluate the different  directions that he could take, I’m storing  
+his options as weights that he can check and  pick the most desirable path in the event that  
+some of his options may be limited. To help me  visualize these weights as I’m developing the  
+movement systems, and help you visualize them  while binging these devlogs and subliminally  
+clicking little blue thumbs, I have created a  gizmo that can draw what the AI is thinking. 
+Direction Gizmo
+Each line represents a direction that  they are considering. Green lines showing  
+a desire to move towards that direction  with longer lines being most desirable,  
+and red lines meaning that they have  absolutely no desire to move in that direction. 
+So as you can see, when one direction  becomes obstructed then the AI will pick  
+the next best option and move in that direction  instead. In order for the AI to determine this,  
+I need to tell it how likely a direction is to  produce a desired result. I’m using a dot product  
+here between the direction being considered and a  vector that the entity would like to move towards. 
+For those unaware, dot product is a very useful  thing that will return the cosine value of  
+the angle between two normalized vectors. This  value will be 1 in the direction of the normal,  
+-1 in the opposite direction,  and 0 perpendicular to it.  
+Scaling
+When normalized between 0 and 1, you get a  scale of how desirable that direction is.  
+The AI is using this to decide  which direction it should move. 
+This is great for moving towards a specific  location. I can simply take the highest  
+unobstructed weight and move in that direction.  But the true power of this system comes when you  
+start shaping the weights and combining them  to perform even more interesting behaviors. 
+Skellies making a beeline for you is one way to  prototype a simple combat system. It is what I  
+have used so far and it served its purpose as a  placeholder, but it’s not nearly as engaging as it  
+could be. A much more interesting behavior would  be for the skellies to move in and out of combat,  
+strafe around their target, all  while keeping a safe distance. 
+I have one set of weights that will move  towards their target as normal, but as they  
+get closer to their target, the value of these  weights are lessened so that other behaviors  
+can take over. So I’m weighting the weights. Once they are within range to start strafing  
+around the character, I apply a shaping function  to the dot product that favors sideways movement  
+instead of forward and backwards. This causes them  to start circling around their target. Except,  
+oh no… I accidentally created a Newton’s  cradle of skellies. I had to offset their  
+following distance a bit otherwise they  start making perfect circles around their  
+target and bouncing off of each other. A big issue that I’ve had with this system  
+though is tweaking the movement to eliminate a  lot of jitteriness that I’ve been noticing due  
+to entities rapidly changing their direction  back and forth. This is because I was having  
+them move directly away from any nearby  entities and so they would get caught up  
+in this tug-o-war of pushing each other in  an attempt to get to their desired target. 
+Immersion
+I fixed this by also applying a shaping  function to their separation logic  
+so that instead of trying to move  directly away from the nearest enemy,  
+they would prefer to do so at a bit of an angle. When you combine this smarter form of movement  
+with the overall tweaks to the skelly’s combat  state machine, you get a very fun enemy to fight  
+that even I spend my free time spawning a few  in for a quick session. And when I had a tester  
+play this, they spent over an hour just fighting  a handful of skellies and sprouts over and over. 
+Combat wasn’t the only enemy behavior to receive a  massive improvement though. One of the main design  
+pillars for my game is immersion, having things  feel natural and convincing. And something I’ve  
+been wanting to improve for a while now is  the wandering logic for my enemies. Before  
+now it has been a placeholder just so they’re not  standing in one place when I record these devlogs. 
+The logic was that they would pick a random point  somewhere around their spawnpoint and move towards  
+it. If they were near the point or it became  obstructed within a short distance then they would  
+pick another point and start moving towards it. This is decent enough but it feels very erratic  
+and unnatural. The AI changes direction  sporadically and to me it feels a little off.  
+Rather than picking a random point to  move towards, I would rather have them  
+meander about. Gradually changing their  direction, but remaining near their spawn  
+point so that they don’t wander off too far. To have them wander about, I’m having them  
+move in a direction, but over time this direction  will gradually sway left and right which causes  
+the entity to start changing direction. I’m using  OpenSimplex noise here to adjust the direction. 
+There are a few benefits to using it here. Namely  that the randomization it produces is smooth which  
+Movement
+gives the wandering a more natural feel to it.  But more importantly the values of OpenSimplex  
+noise tend to be more heavily weighted towards 0,  which means that if done right the entity isn’t  
+going to spend too much time changing direction.  Instead it will move straight for periods of time,  
+and then every so often it’ll start changing its  direction but then start pulling back towards 0,  
+which causes it to again move mostly straight. To keep them near their spawn point,  
+I’m weighing their wandering direction back  towards their spawn point whenever they start  
+getting too far away from it. This causes them  to gradually start turning around until they’re  
+no longer moving away from the spawn point. To keep this looking smooth and natural,  
+this isn’t a hard transition though. The weighting  starts to take effect at a pretty short distance  
+from their spawn point, currently at about  a 2 tile radius. But it’s weighted based on  
+how far they are from the spawn point, so  it’s much less effective until they start  
+getting further and further away. But since  it’s smoothed out over that distance, it can  
+be difficult to tell where that point is, so to  me it feels much more natural and convincing. 
+Outro
+After I added these movement tweaks and ai  improvements, I started experimenting with  
+a faction system for NPC targeting, I ended up  making it so that enemies could target each other,  
+which surprisingly enough led to this interesting  battle royale behavior with the enemies. I didn’t  
+expect this to look nearly as amazing  as it did with no additional tweaking,  
+but this was an aha moment for me. If I can  flip a switch and make NPCs fight each other,  
+and have it look this amazing. Then I think I’m  going to lean a whole lot more into the pet taming  
+and raising system that I have planned next. If you want to join me as I work on this,  
+then I’ve been streaming development nearly  every day on my Discord, there’s a link in the  
+description to join our community. It has been  a fantastic way to interact with everyone as  
+we do everything from adding in new mechanics,  drawing art, or just playing games together.  
+We also got our first fanart of the spirit  skelly which is absolutely adorable, as well  
+as the two new NPCs that we designed during  the Tuesday streams. It’s always a treat when  
+sco_otr draws along with me during these. Thanks  for watching, and I’ll see you in the next one!
