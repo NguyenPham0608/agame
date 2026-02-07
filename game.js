@@ -45,6 +45,7 @@
   let stepTimer = 0;
   let floorNoise = [];
   let particles = [];
+  let enemyProjectiles = [];
 
   // ──────── TILE IMAGES (15-tile auto-tiling) ────────
   // Place your tileset images in images/walls/{rock,brick,obsidian,tree}/
@@ -540,7 +541,7 @@
       p.life--;
       if (p.life <= 0) { particles.splice(i, 1); }
     }
-    if (particles.length > 80) particles.splice(0, particles.length - 80);
+    if (particles.length > 120) particles.splice(0, particles.length - 120);
   }
 
   function drawParticles() {
@@ -571,10 +572,119 @@
         continue;
       } else if (p.type === "heal") {
         ctx.fillStyle = `rgba(100,255,150,${alpha * 0.8})`;
+      } else if (p.type === "projectile_trail") {
+        ctx.fillStyle = p.color || "#f80";
+        ctx.globalAlpha = alpha * 0.5;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        continue;
+      } else if (p.type === "projectile_flash") {
+        ctx.fillStyle = p.color || "#fff";
+        ctx.globalAlpha = alpha * 0.8;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        continue;
+      } else if (p.type === "dash_trail") {
+        ctx.fillStyle = p.color || "#fff";
+        ctx.globalAlpha = alpha * 0.35;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        continue;
       } else {
         ctx.fillStyle = `rgba(200,190,170,${alpha * 0.4})`;
       }
       ctx.fill();
+    }
+  }
+
+  // ──────── ENEMY PROJECTILES ────────
+  function updateEnemyProjectiles() {
+    for (let i = enemyProjectiles.length - 1; i >= 0; i--) {
+      const p = enemyProjectiles[i];
+      p.x += p.vx;
+      p.y += p.vy;
+      p.life--;
+
+      // Wall collision — destroy projectile
+      if (isSolid(Math.floor(p.x / TILE), Math.floor(p.y / TILE))) {
+        for (let j = 0; j < 4; j++) {
+          particles.push({
+            x: p.x, y: p.y,
+            vx: (Math.random() - 0.5) * 2, vy: (Math.random() - 0.5) * 2,
+            life: 10 + Math.random() * 8, maxLife: 18,
+            size: 1.5 + Math.random(), type: "hit",
+          });
+        }
+        enemyProjectiles.splice(i, 1);
+        continue;
+      }
+
+      // Player collision
+      const dx = p.x - state.playerX, dy = p.y - state.playerY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < 12) {
+        state.hp -= p.damage;
+        spawnFloatingText(state.playerX, state.playerY - 25, `-${p.damage} HP`, "#e94560", 16);
+        triggerShake(6);
+        damageFlash = 12;
+        $("#player-hp").textContent = Math.max(0, state.hp);
+        if (dist > 0) {
+          state.velX += (-dx / dist) * 1.5;
+          state.velY += (-dy / dist) * 1.5;
+        }
+        enemyProjectiles.splice(i, 1);
+        if (state.hp <= 0) { fleeDungeon(true); return; }
+        continue;
+      }
+
+      // Trail particles every 3 frames
+      if (p.life % 3 === 0) {
+        particles.push({
+          x: p.x + (Math.random() - 0.5) * 3,
+          y: p.y + (Math.random() - 0.5) * 3,
+          vx: -p.vx * 0.1 + (Math.random() - 0.5) * 0.3,
+          vy: -p.vy * 0.1 + (Math.random() - 0.5) * 0.3,
+          life: 12 + Math.random() * 6, maxLife: 18,
+          size: p.size * 0.6,
+          type: "projectile_trail", color: p.color,
+        });
+      }
+
+      // Expire
+      if (p.life <= 0) enemyProjectiles.splice(i, 1);
+    }
+    if (enemyProjectiles.length > 30) enemyProjectiles.splice(0, enemyProjectiles.length - 30);
+  }
+
+  function drawEnemyProjectiles() {
+    for (const p of enemyProjectiles) {
+      const sx = p.x - camX, sy = p.y - camY;
+      if (sx < -20 || sx > canvas.width + 20 || sy < -20 || sy > canvas.height + 20) continue;
+
+      const alpha = Math.min(1, p.life / (p.maxLife * 0.15));
+
+      // Outer glow
+      ctx.globalAlpha = alpha * 0.3;
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(sx, sy, p.size * 2.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Mid ring
+      ctx.globalAlpha = alpha * 0.7;
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(sx, sy, p.size, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Bright core
+      ctx.globalAlpha = alpha * 0.9;
+      ctx.fillStyle = "#fff";
+      ctx.beginPath();
+      ctx.arc(sx, sy, p.size * 0.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.globalAlpha = 1;
     }
   }
 
@@ -596,6 +706,7 @@
     state.goldCollected = 0;
     collectedTiles = new Set();
     particles = [];
+    enemyProjectiles = [];
     floatingTexts = [];
     flyingIcons = [];
     shakeIntensity = 0;
@@ -2065,6 +2176,8 @@
 
     // Update systems
     updateParticles();
+    updateEnemyProjectiles();
+    if (!state.inDungeon) return;
     updateFloatingTexts();
     updateFlyingIcons();
     updateShake();
@@ -2127,6 +2240,9 @@
 
     // Pass 6: Particles
     drawParticles();
+
+    // Pass 6.5: Enemy Projectiles
+    drawEnemyProjectiles();
 
     // Pass 7: Enemies
     for (const e of enemies) e.draw();
@@ -2338,6 +2454,7 @@
     TILE,
     isSolid,
     get particles() { return particles; },
+    get enemyProjectiles() { return enemyProjectiles; },
     get enemies() { return enemies; },
     get attackTokens() { return attackTokens; },
     spawnFloatingText,

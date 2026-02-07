@@ -122,8 +122,8 @@ const GAME_DATA = {
       enemyDamage: 3,
       enemyHP: 2,
       enemyTypes: [
-        { name: "Golem", bodyColor: "#7a7a6a", eyeColor: "#ff4", size: 12, shape: "square" },
-        { name: "Bat", bodyColor: "#4a4a5a", eyeColor: "#f44", size: 7, shape: "bat" },
+        { name: "Golem", bodyColor: "#7a7a6a", eyeColor: "#ff4", size: 12, shape: "square", attackStyle: "sword", swordColor: "#888", swordLength: 18 },
+        { name: "Bat", bodyColor: "#4a4a5a", eyeColor: "#f44", size: 7, shape: "bat", attackStyle: "dash", dashColor: "#6a6a8a" },
       ],
       floorColor: "#2a2a3a",
       wallColor: "#554444",
@@ -195,8 +195,8 @@ const GAME_DATA = {
       enemyDamage: 3,
       enemyHP: 3,
       enemyTypes: [
-        { name: "Spider", bodyColor: "#5a3a5a", eyeColor: "#f44", size: 10, shape: "spider" },
-        { name: "Wisp", bodyColor: "#3a8a4a", eyeColor: "#afa", size: 8, shape: "wisp" },
+        { name: "Spider", bodyColor: "#5a3a5a", eyeColor: "#f44", size: 10, shape: "spider", attackStyle: "projectile", projectileColor: "#7a4", projectileSize: 3 },
+        { name: "Wisp", bodyColor: "#3a8a4a", eyeColor: "#afa", size: 8, shape: "wisp", attackStyle: "projectile", projectileColor: "#afa", projectileSize: 3.5 },
       ],
       floorColor: "#1a2a1a",
       wallColor: "#2a4a2a",
@@ -270,8 +270,8 @@ const GAME_DATA = {
       enemyDamage: 4,
       enemyHP: 4,
       enemyTypes: [
-        { name: "Skeleton", bodyColor: "#ccbbaa", eyeColor: "#333", size: 10, shape: "skull" },
-        { name: "Ghost", bodyColor: "#8888cc", eyeColor: "#fff", size: 11, shape: "ghost" },
+        { name: "Skeleton", bodyColor: "#ccbbaa", eyeColor: "#333", size: 10, shape: "skull", attackStyle: "sword", swordColor: "#ddc", swordLength: 20 },
+        { name: "Ghost", bodyColor: "#8888cc", eyeColor: "#fff", size: 11, shape: "ghost", attackStyle: "projectile", projectileColor: "#aaf", projectileSize: 4 },
       ],
       floorColor: "#1e1e2e",
       wallColor: "#3a3a5a",
@@ -344,8 +344,8 @@ const GAME_DATA = {
       enemyDamage: 5,
       enemyHP: 5,
       enemyTypes: [
-        { name: "Fire Imp", bodyColor: "#dd5522", eyeColor: "#ff0", size: 9, shape: "imp" },
-        { name: "Lava Slime", bodyColor: "#aa3311", eyeColor: "#ff6", size: 13, shape: "slime" },
+        { name: "Fire Imp", bodyColor: "#dd5522", eyeColor: "#ff0", size: 9, shape: "imp", attackStyle: "projectile", projectileColor: "#f60", projectileSize: 4.5 },
+        { name: "Lava Slime", bodyColor: "#aa3311", eyeColor: "#ff6", size: 13, shape: "slime", attackStyle: "dash", dashColor: "#f40", leavesTrail: true },
       ],
       floorColor: "#2a1a1a",
       wallColor: "#5a3030",

@@ -46,8 +46,31 @@ class Enemy {
     this.spawnY = y;
     this.noiseOffset = Math.random() * 1000;
     this.strafeDir = Math.random() < 0.5 ? 1 : -1; // CW or CCW circling
-    this.preferredDist = 55 + Math.random() * 35; // 55-90, prevents Newton's cradle
     this._distToPlayer = 0; // set by coordinator each frame
+
+    // Attack style
+    this.attackStyle = type ? (type.attackStyle || "contact") : "contact";
+    this.preferredDist = this.attackStyle === "projectile"
+      ? 90 + Math.random() * 40   // 90-130 for ranged
+      : 55 + Math.random() * 35;  // 55-90 for melee/dash
+
+    // Sword attack state
+    this.swordAngle = 0;
+    this.swordSwinging = false;
+    this.swordSwingTimer = 0;
+    this.swordSwingDir = 1;
+
+    // Dash attack state
+    this.dashing = false;
+    this.dashTimer = 0;
+    this.dashDirX = 0;
+    this.dashDirY = 0;
+    this._dashHitPlayer = false;
+
+    // Stuck detection (for corner escape)
+    this.stuckCounter = 0;
+    this.lastX = x;
+    this.lastY = y;
 
     // Debug gizmo data (updated each frame by update())
     this._steerScores = new Float32Array(NUM_DIRS);
@@ -82,6 +105,84 @@ class Enemy {
 
     if (this.hitFlash > 0 || kbSpeed > 1.5) return false;
 
+    // ── Dash has its own movement — skip steering ──
+    if (this.dashing) {
+      // Dash update runs in the attack section below, just need state refs
+      const state = _g.state;
+      const dx = state.playerX - this.x, dy = state.playerY - this.y;
+      const distToPlayer = Math.sqrt(dx * dx + dy * dy);
+      const toPx = distToPlayer > 0 ? dx / distToPlayer : 0;
+      const toPy = distToPlayer > 0 ? dy / distToPlayer : 0;
+
+      // Update dash (movement, damage, timer)
+      this.dashTimer--;
+      const dashSpeed = 2.5 + (state.currentDungeon.difficulty - 1) * 0.3;
+      const nx = this.x + this.dashDirX * dashSpeed;
+      const ny = this.y + this.dashDirY * dashSpeed;
+
+      if (_g.isSolid(Math.floor(nx / _g.TILE), Math.floor(ny / _g.TILE))) {
+        this.dashing = false;
+        this.dashTimer = 0;
+        for (let j = 0; j < 5; j++) {
+          _g.particles.push({
+            x: this.x, y: this.y,
+            vx: (Math.random() - 0.5) * 3, vy: (Math.random() - 0.5) * 3,
+            life: 10 + Math.random() * 5, maxLife: 15,
+            size: 2 + Math.random(), type: "hit",
+          });
+        }
+      } else {
+        this.x = nx;
+        this.y = ny;
+      }
+
+      if (this.dashing && !this._dashHitPlayer) {
+        const dxP = state.playerX - this.x, dyP = state.playerY - this.y;
+        const distP = Math.sqrt(dxP * dxP + dyP * dyP);
+        if (distP < 16) {
+          this._dashHitPlayer = true;
+          this._applyDamageToPlayer(state);
+          if (distP > 0) {
+            state.velX += (dxP / distP) * 3.0;
+            state.velY += (dyP / distP) * 3.0;
+          }
+        }
+      }
+
+      const trailColor = this.type.dashColor || this.bodyColor;
+      _g.particles.push({
+        x: this.x + (Math.random() - 0.5) * 6,
+        y: this.y + (Math.random() - 0.5) * 6,
+        vx: -this.dashDirX * 0.5 + (Math.random() - 0.5) * 0.5,
+        vy: -this.dashDirY * 0.5 + (Math.random() - 0.5) * 0.5,
+        life: 12 + Math.random() * 8, maxLife: 20,
+        size: this.size * 0.5 + Math.random() * 2,
+        type: "dash_trail", color: trailColor,
+      });
+
+      if (this.type.leavesTrail) {
+        _g.particles.push({
+          x: this.x, y: this.y, vx: 0, vy: 0,
+          life: 40 + Math.random() * 20, maxLife: 60,
+          size: 4 + Math.random() * 3, type: "ember",
+        });
+      }
+
+      if (this.dashTimer <= 0) {
+        this.dashing = false;
+        this._dashHitPlayer = false;
+      }
+
+      // Update sword swing if also active
+      if (this.swordSwinging) {
+        this.swordSwingTimer--;
+        this.swordAngle += this.swordSwingDir * (Math.PI / 15);
+        if (this.swordSwingTimer <= 0) this.swordSwinging = false;
+      }
+
+      return false;
+    }
+
     // ── Context-Based Steering ──
     const state = _g.state;
     const dx = state.playerX - this.x;
@@ -106,7 +207,9 @@ class Enemy {
     const engagePulse = 0.5 + 0.5 * Math.sin(t * 0.8 + this.noiseOffset * 0.5);
 
     // Token holders close in aggressively; others hold at preferred distance
-    const idealDist = hasToken ? 18 : this.preferredDist;
+    const idealDist = hasToken
+      ? (this.attackStyle === "projectile" ? 100 : 18)
+      : this.preferredDist;
 
     // My angle relative to player (for surround spread)
     const myAngle = Math.atan2(this.y - state.playerY, this.x - state.playerX);
@@ -221,7 +324,29 @@ class Enemy {
           danger[i] = Math.max(danger[i], r === 1 ? 1.0 : 0.5);
         }
       }
+
+      // ── ESCAPE PRESSURE when stuck in corners ──
+      if (this.stuckCounter > 30 && danger[i] < 0.3) {
+        interest[i] += 0.3 * Math.min(1, (this.stuckCounter - 30) / 60);
+      }
     }
+
+    // ── WALL-SLIDE: redistribute blocked interest to adjacent clear dirs ──
+    const redistributed = new Float32Array(NUM_DIRS);
+    for (let i = 0; i < NUM_DIRS; i++) redistributed[i] = interest[i];
+    for (let i = 0; i < NUM_DIRS; i++) {
+      if (danger[i] < 0.5) continue;
+      const blocked = interest[i] * danger[i];
+      if (blocked < 0.01) continue;
+      for (let offset = 1; offset <= 3; offset++) {
+        const weight = offset === 1 ? 0.5 : offset === 2 ? 0.3 : 0.15;
+        const left  = (i - offset + NUM_DIRS) % NUM_DIRS;
+        const right = (i + offset) % NUM_DIRS;
+        if (danger[left]  < 0.5) redistributed[left]  += blocked * weight;
+        if (danger[right] < 0.5) redistributed[right] += blocked * weight;
+      }
+    }
+    for (let i = 0; i < NUM_DIRS; i++) interest[i] = redistributed[i];
 
     // ── Pick best direction ──
     let bestI = -1;
@@ -251,22 +376,118 @@ class Enemy {
       }
     }
 
-    // ── Attack on contact (only with token) ──
-    if (hasToken && distToPlayer < 18 && this.attackCooldown <= 0) {
-      state.hp -= this.damage;
-      this.attackCooldown = 60;
-      _g.spawnFloatingText(state.playerX, state.playerY - 25, `-${this.damage} HP`, "#e94560", 16);
-      _g.triggerShake(8);
-      _g.damageFlash = 15;
-      _g.$("#player-hp").textContent = Math.max(0, state.hp);
-      if (distToPlayer > 0) {
-        state.velX -= toPx * 2.5;
-        state.velY -= toPy * 2.5;
+    // ── Stuck detection ──
+    const movedDist = Math.abs(this.x - this.lastX) + Math.abs(this.y - this.lastY);
+    if (movedDist < 0.15 && inRange) {
+      this.stuckCounter++;
+    } else {
+      this.stuckCounter = Math.max(0, this.stuckCounter - 2);
+    }
+    this.lastX = this.x;
+    this.lastY = this.y;
+
+    // ── Attack dispatch (only with token) ──
+    if (hasToken && this.attackCooldown <= 0) {
+      if (this.attackStyle === "sword" && distToPlayer < 28 && !this.swordSwinging) {
+        this._startSwordSwing(toPx, toPy);
+      } else if (this.attackStyle === "dash" && distToPlayer < 80 && distToPlayer > 20 && !this.dashing) {
+        this._startDash(toPx, toPy);
+      } else if (this.attackStyle === "projectile" && distToPlayer < 150 && distToPlayer > 30) {
+        this._fireProjectile(toPx, toPy, state);
+      } else if (this.attackStyle === "contact" && distToPlayer < 18) {
+        this._doContactDamage(toPx, toPy, state);
       }
-      if (state.hp <= 0) { _g.fleeDungeon(true); return false; }
+    }
+
+    // ── Update sword swing ──
+    if (this.swordSwinging) {
+      this.swordSwingTimer--;
+      this.swordAngle += this.swordSwingDir * (Math.PI / 15);
+
+      // Damage check at mid-swing (frame 10 of 20)
+      if (this.swordSwingTimer === 10) {
+        const sLen = this.type.swordLength || 18;
+        const tipX = this.x + Math.cos(this.swordAngle) * sLen;
+        const tipY = this.y + Math.sin(this.swordAngle) * sLen;
+        const dxP = state.playerX - tipX, dyP = state.playerY - tipY;
+        if (Math.sqrt(dxP * dxP + dyP * dyP) < 16) {
+          this._applyDamageToPlayer(state);
+        }
+      }
+      if (this.swordSwingTimer <= 0) this.swordSwinging = false;
     }
 
     return false;
+  }
+
+  // ── Attack helper methods ──
+
+  _applyDamageToPlayer(state) {
+    state.hp -= this.damage;
+    _g.spawnFloatingText(state.playerX, state.playerY - 25, `-${this.damage} HP`, "#e94560", 16);
+    _g.triggerShake(6);
+    _g.damageFlash = 12;
+    _g.$("#player-hp").textContent = Math.max(0, state.hp);
+    if (state.hp <= 0) _g.fleeDungeon(true);
+  }
+
+  _doContactDamage(toPx, toPy, state) {
+    this._applyDamageToPlayer(state);
+    this.attackCooldown = 60;
+    if (Math.sqrt(toPx * toPx + toPy * toPy) > 0) {
+      state.velX -= toPx * 2.5;
+      state.velY -= toPy * 2.5;
+    }
+  }
+
+  _startSwordSwing(toPx, toPy) {
+    this.swordSwinging = true;
+    this.swordSwingTimer = 20;
+    this.swordAngle = Math.atan2(toPy, toPx) - Math.PI / 3;
+    this.swordSwingDir = Math.random() < 0.5 ? 1 : -1;
+    this.attackCooldown = 70;
+  }
+
+  _startDash(toPx, toPy) {
+    this.dashing = true;
+    this.dashTimer = 15;
+    this.dashDirX = toPx;
+    this.dashDirY = toPy;
+    this._dashHitPlayer = false;
+    this.attackCooldown = 90;
+  }
+
+  _fireProjectile(toPx, toPy, state) {
+    const projSpeed = 1.8 + (state.currentDungeon.difficulty - 1) * 0.2;
+    const projColor = this.type.projectileColor || "#f80";
+    const projSize = this.type.projectileSize || 3;
+
+    _g.enemyProjectiles.push({
+      x: this.x + toPx * this.size,
+      y: this.y + toPy * this.size,
+      vx: toPx * projSpeed,
+      vy: toPy * projSpeed,
+      damage: this.damage,
+      life: 180,
+      maxLife: 180,
+      color: projColor,
+      size: projSize,
+    });
+
+    this.attackCooldown = 90;
+
+    // Muzzle flash particles
+    for (let j = 0; j < 3; j++) {
+      _g.particles.push({
+        x: this.x + toPx * this.size,
+        y: this.y + toPy * this.size,
+        vx: toPx * 1.5 + (Math.random() - 0.5) * 1,
+        vy: toPy * 1.5 + (Math.random() - 0.5) * 1,
+        life: 8 + Math.random() * 5, maxLife: 13,
+        size: 1.5 + Math.random(),
+        type: "projectile_flash", color: projColor,
+      });
+    }
   }
 
   takeHit() {
@@ -331,7 +552,19 @@ class Enemy {
     ctx.save();
     ctx.translate(sx, sy + bob);
 
+    // Dash stretch effect
+    if (this.dashing && !this.dead) {
+      const dashAngle = Math.atan2(this.dashDirY, this.dashDirX);
+      ctx.rotate(dashAngle);
+      ctx.scale(1.4, 0.7);
+      ctx.rotate(-dashAngle);
+    }
+
     this._drawBody(ctx, shape, bodyColor, eyeColor, sz, t);
+
+    // Draw sword for melee enemies
+    if (this.attackStyle === "sword") this._drawSword(ctx);
+
     this._drawEyes(ctx, shape, eyeColor, sz);
 
     ctx.restore();
@@ -582,6 +815,58 @@ class Enemy {
     ctx.arc(-3 + lx, -2 + ly, 1.2, 0, Math.PI * 2);
     ctx.arc(3 + lx, -2 + ly, 1.2, 0, Math.PI * 2);
     ctx.fill();
+  }
+
+  _drawSword(ctx) {
+    const sLen = this.type.swordLength || 18;
+    const color = this.type.swordColor || "#999";
+    const state = _g.state;
+
+    if (this.swordSwinging) {
+      ctx.save();
+      ctx.rotate(this.swordAngle);
+      // Blade
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(4, -2.5);
+      ctx.lineTo(sLen, 0);
+      ctx.lineTo(4, 2.5);
+      ctx.closePath();
+      ctx.fill();
+      // Edge highlight
+      ctx.strokeStyle = "rgba(255,255,255,0.4)";
+      ctx.lineWidth = 0.5;
+      ctx.beginPath();
+      ctx.moveTo(5, -2);
+      ctx.lineTo(sLen - 1, 0);
+      ctx.stroke();
+      // Handle
+      ctx.fillStyle = "#5a3a1a";
+      ctx.fillRect(0, -2, 5, 4);
+      // Guard
+      ctx.fillStyle = "#888";
+      ctx.fillRect(4, -4, 2, 8);
+      ctx.restore();
+    } else {
+      // Idle: point toward player
+      const dx = state.playerX - this.x, dy = state.playerY - this.y;
+      const angle = Math.atan2(dy, dx);
+      const sz = this.size;
+      ctx.save();
+      ctx.rotate(angle);
+      ctx.globalAlpha *= 0.65;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(sz * 0.7, -1.5);
+      ctx.lineTo(sz * 0.7 + sLen * 0.65, 0);
+      ctx.lineTo(sz * 0.7, 1.5);
+      ctx.closePath();
+      ctx.fill();
+      // Handle
+      ctx.fillStyle = "#5a3a1a";
+      ctx.fillRect(sz * 0.4, -1.5, sz * 0.35, 3);
+      ctx.restore();
+    }
   }
 
   _drawHPBar(ctx, sx, sy, sz, bob) {
