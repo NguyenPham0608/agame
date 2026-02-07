@@ -33,6 +33,8 @@
   const MAX_SPEED = 3.4;
   const PLAYER_SIZE = 20;
   const CAMERA_LERP = 0.1;
+  const WALL_FACE_HEIGHT = 25;       // 2.5D south face height in pixels
+  const WALL_FACE_EAST_WIDTH = 0;    // 2.5D east face width in pixels
 
   let camX = 0, camY = 0;
   const keysDown = new Set();
@@ -1424,24 +1426,136 @@
         const sx = c * TILE - rcamX;
         const sy = r * TILE - rcamY;
 
-        // Shadow below wall
+        // Shadow below wall face (cast from base of 2.5D face)
         if (r + 1 < mapRows && !isWall(c, r + 1)) {
-          const grad = ctx.createLinearGradient(sx, sy + TILE, sx, sy + TILE + 10);
-          grad.addColorStop(0, "rgba(0,0,0,0.35)");
+          const shadowY = sy + TILE + WALL_FACE_HEIGHT;
+          const grad = ctx.createLinearGradient(sx, shadowY, sx, shadowY + 12);
+          grad.addColorStop(0, "rgba(0,0,0,0.4)");
           grad.addColorStop(1, "rgba(0,0,0,0)");
           ctx.fillStyle = grad;
-          ctx.fillRect(sx, sy + TILE, TILE, 10);
+          ctx.fillRect(sx, shadowY, TILE, 12);
         }
-        // Shadow right of wall
+        // Shadow right of wall face (cast from east face edge)
         if (c + 1 < mapCols && !isWall(c + 1, r)) {
-          const grad = ctx.createLinearGradient(sx + TILE, sy, sx + TILE + 8, sy);
-          grad.addColorStop(0, "rgba(0,0,0,0.2)");
+          const shadowX = sx + TILE + WALL_FACE_EAST_WIDTH;
+          const grad = ctx.createLinearGradient(shadowX, sy, shadowX + 10, sy);
+          grad.addColorStop(0, "rgba(0,0,0,0.25)");
           grad.addColorStop(1, "rgba(0,0,0,0)");
           ctx.fillStyle = grad;
-          ctx.fillRect(sx + TILE, sy, 8, TILE);
+          ctx.fillRect(shadowX, sy, 10, TILE);
         }
       }
     }
+  }
+
+  // ──────── 2.5D WALL FACE EFFECT ────────
+  function getWallFaceBaseColor(dungeon) {
+    const t = dungeon.theme;
+    return t.wallShadow || t.brickDark || t.rockColor || t.trunkDark || t.canopyDark || '#3a2a22';
+  }
+
+  function drawWallFaces(startCol, endCol, startRow, endRow, rcamX, rcamY, dungeon) {
+    const style = dungeon.theme.wallStyle;
+    for (let r = startRow; r <= endRow; r++) {
+      for (let c = startCol; c <= endCol; c++) {
+        if (!isWall(c, r)) continue;
+        const sx = c * TILE - rcamX;
+        const sy = r * TILE - rcamY;
+        const pattern = getAutoTilePattern(c, r);
+        const hasSouth = !isWall(c, r + 1);
+        const hasEast = !isWall(c + 1, r);
+
+        if (hasSouth) drawFaceSouth(style, pattern, sx, sy, dungeon);
+        if (hasEast) drawFaceEast(style, pattern, sx, sy, dungeon, hasSouth);
+        if (hasSouth && hasEast) drawFaceCorner(style, pattern, sx, sy, dungeon);
+      }
+    }
+  }
+
+  function drawFaceSouth(style, pattern, sx, sy, dungeon) {
+    const fy = sy + TILE;
+    const fh = WALL_FACE_HEIGHT;
+    const fw = TILE + 1;
+
+    // Base: wall image squeezed into face, or theme color fallback
+    if (hasWallImage(style, pattern)) {
+      ctx.drawImage(WALL_IMAGES[style][pattern], sx, fy, fw, fh);
+    } else {
+      ctx.fillStyle = getWallFaceBaseColor(dungeon);
+      ctx.fillRect(sx, fy, fw, fh);
+    }
+
+    // Dark tint — south face in shadow
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+    ctx.fillRect(sx, fy, fw, fh);
+
+    // Depth gradient: darker toward the ground
+    const grad = ctx.createLinearGradient(sx, fy, sx, fy + fh);
+    grad.addColorStop(0, 'rgba(0, 0, 0, 0)');
+    grad.addColorStop(1, 'rgba(0, 0, 0, 0.4)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(sx, fy, fw, fh);
+
+    // Highlight at top edge (wall lip catching light)
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+    ctx.fillRect(sx, fy, fw, 1);
+
+    // Dark line at bottom (ground junction / ambient occlusion)
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    ctx.fillRect(sx, fy + fh - 1, fw, 1);
+  }
+
+  function drawFaceEast(style, pattern, sx, sy, dungeon, hasSouth) {
+    const fx = sx + TILE;
+    const fw = WALL_FACE_EAST_WIDTH;
+    // If there's also a south face, extend the east face down to meet it
+    const fh = TILE + 1;
+
+    // Base: wall image squeezed horizontally, or theme color
+    if (hasWallImage(style, pattern)) {
+      ctx.drawImage(WALL_IMAGES[style][pattern], fx, sy, fw, fh);
+    } else {
+      ctx.fillStyle = getWallFaceBaseColor(dungeon);
+      ctx.fillRect(fx, sy, fw, fh);
+    }
+
+    // Darker tint — east face in deeper shadow
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    ctx.fillRect(fx, sy, fw, fh);
+
+    // Horizontal gradient: darker toward the right edge
+    const grad = ctx.createLinearGradient(fx, sy, fx + fw, sy);
+    grad.addColorStop(0, 'rgba(0, 0, 0, 0)');
+    grad.addColorStop(1, 'rgba(0, 0, 0, 0.35)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(fx, sy, fw, fh);
+
+    // Highlight at left edge (wall lip)
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+    ctx.fillRect(fx, sy, 1, fh);
+
+    // Dark line at right edge
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    ctx.fillRect(fx + fw - 1, sy, 1, fh);
+  }
+
+  function drawFaceCorner(style, pattern, sx, sy, dungeon) {
+    const fx = sx + TILE;
+    const fy = sy + TILE;
+    const fw = WALL_FACE_EAST_WIDTH;
+    const fh = WALL_FACE_HEIGHT;
+
+    // Base
+    if (hasWallImage(style, pattern)) {
+      ctx.drawImage(WALL_IMAGES[style][pattern], fx, fy, fw, fh);
+    } else {
+      ctx.fillStyle = getWallFaceBaseColor(dungeon);
+      ctx.fillRect(fx, fy, fw, fh);
+    }
+
+    // Darkest tint — corner in deepest shadow
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+    ctx.fillRect(fx, fy, fw, fh);
   }
 
   // ──────── ITEM DRAWING ────────
@@ -1988,10 +2102,13 @@
       }
     }
 
-    // Pass 2: Shadows
+    // Pass 2: Wall Faces (2.5D depth effect — south/east sides of walls)
+    drawWallFaces(startCol, endCol, startRow, endRow, rcamX, rcamY, dungeon);
+
+    // Pass 3: Shadows (cast from base of wall faces)
     drawShadows(startCol, endCol, startRow, endRow, rcamX, rcamY);
 
-    // Pass 3: Items on floor (before walls so walls layer on top)
+    // Pass 4: Items on floor (drawn after faces so items appear in front)
     for (let r = startRow; r <= endRow; r++) {
       for (let c = startCol; c <= endCol; c++) {
         if (dungeonMap[r][c] === 1) continue;
@@ -1999,7 +2116,7 @@
       }
     }
 
-    // Pass 4: Walls (drawn after floor items for depth)
+    // Pass 5: Wall Tops (the top surface of walls, drawn last for depth)
     for (let r = startRow; r <= endRow; r++) {
       for (let c = startCol; c <= endCol; c++) {
         if (dungeonMap[r][c] !== 1) continue;
@@ -2008,23 +2125,23 @@
       }
     }
 
-    // Pass 5: Particles
+    // Pass 6: Particles
     drawParticles();
 
-    // Pass 6: Enemies
+    // Pass 7: Enemies
     for (const e of enemies) e.draw();
 
-    // Pass 7: Player, Arm & Sword
+    // Pass 8: Player, Arm & Sword
     drawPlayer(Math.round(state.playerX - rcamX), Math.round(state.playerY - rcamY));
     drawArm();
     drawSword();
 
-    // Pass 8: Floating text (world-space)
+    // Pass 9: Floating text (world-space)
     drawFloatingTexts();
 
     ctx.restore(); // End screen shake offset
 
-    // Pass 9: UI overlays (not affected by shake)
+    // Pass 10: UI overlays (not affected by shake)
     drawMinimap();
     drawHPBar();
     drawLootBag();
